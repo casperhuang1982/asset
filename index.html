@@ -264,7 +264,7 @@
     </div>
 
     <script>
-        // 1. 預設投資組合資料 (已對齊您的 CSV 代碼格式，例如 TPE:0050)
+        // 1. 預設投資組合資料 (已對齊您的 CSV 代碼格式)
         let initialPortfolio = [
             { ticker: 'VT', currency: 'USD', targetWeight: 57, shares: 4700, price: 140.40 },
             { ticker: 'VGIT', currency: 'USD', targetWeight: 23.5, shares: 4300, price: 59.98 },
@@ -377,113 +377,141 @@
             return arrData;
         }
 
-        // 4. 從 Google Sheets (CSV) 抓取報價與匯率資料
+        // 4. 從 Google Sheets (CSV) 抓取報價與匯率資料 (雙重代理備援機制)
         async function fetchPricesFromSheet() {
             const statusEl = document.getElementById('loadingStatus');
             statusEl.style.opacity = '1';
             statusEl.innerText = '正在從 Google Sheets 抓取最新報價與匯率...';
             statusEl.style.color = '#2980b9';
 
-            // 將 /pubhtml 自動替換為 /pub?output=csv 以便讀取原始資料
             const originalUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSJZCi_7qDOKVxzzZ2GsglxSChQH-fRlii2tQoRb3a-v_GxSfGims6tfm9q1fyoWOZxjiHN72Qofakr/pub?output=csv';
-            
-            // 使用 allorigins 代理伺服器繞過本地端瀏覽器的 CORS 阻擋
-            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(originalUrl)}`;
+            const encodedUrl = encodeURIComponent(originalUrl);
+            const timestamp = new Date().getTime();
+
+            // 定義兩個代理伺服器作為備援
+            const proxy1 = `https://api.allorigins.win/raw?url=${encodedUrl}&t=${timestamp}`;
+            const proxy2 = `https://corsproxy.io/?${encodedUrl}`;
+
+            let csvText = null;
 
             try {
-                // 加入時間戳記避免讀取到舊快取
-                const timestamp = new Date().getTime();
-                const response = await fetch(`${proxyUrl}&t=${timestamp}`);
-                if (!response.ok) throw new Error('無法取得 Google Sheets 資料');
-                
-                const csvText = await response.text();
-                const csvData = parseCSVToArray(csvText);
-
-                let tickerIdx = -1;
-                let priceIdx = -1;
-                let headerRowIdx = -1;
-                let updateCount = 0;
-                let isExchangeRateUpdated = false;
-
-                // 第一階段：嚴謹地掃描尋找真正的表頭列 (鎖定 "代碼" 與 "PRICE")
-                for (let i = 0; i < csvData.length; i++) {
-                    const row = csvData[i];
-                    let tempTickerIdx = -1;
-                    let tempPriceIdx = -1;
-
-                    for (let j = 0; j < row.length; j++) {
-                        if (row[j] && row[j].trim() === '代碼') tempTickerIdx = j;
-                        if (row[j] && row[j].trim() === 'PRICE') tempPriceIdx = j;
-                    }
-
-                    // 必須在「同一列」同時找到這兩個欄位，才認定為正確的表頭
-                    if (tempTickerIdx !== -1 && tempPriceIdx !== -1) {
-                        tickerIdx = tempTickerIdx;
-                        priceIdx = tempPriceIdx;
-                        headerRowIdx = i;
-                        break;
-                    }
+                // 嘗試第一個代理伺服器 (allorigins)
+                let response = await fetch(proxy1);
+                if (response.ok) {
+                    csvText = await response.text();
+                } else {
+                    throw new Error('Proxy 1 回應錯誤');
                 }
+            } catch (error1) {
+                console.warn('主要代理伺服器失敗，正在切換至備用伺服器...', error1);
+                try {
+                    // 若失敗，無縫切換至第二個代理伺服器 (corsproxy.io)
+                    let response = await fetch(proxy2);
+                    if (response.ok) {
+                        csvText = await response.text();
+                    } else {
+                        throw new Error('Proxy 2 回應錯誤');
+                    }
+                } catch (error2) {
+                    console.error('所有代理伺服器皆失敗:', error2);
+                    statusEl.innerText = `⚠️ 無法連線至 Google Sheets，已載入上次最後紀錄的股價。`;
+                    statusEl.style.color = '#e74c3c';
+                    setTimeout(() => { statusEl.style.opacity = '0'; }, 5000);
+                    return; // 結束函式執行
+                }
+            }
 
-                // 第二階段：從表頭的下一列開始讀取正確的資料
-                if (tickerIdx !== -1 && priceIdx !== -1) {
-                    for (let i = headerRowIdx + 1; i < csvData.length; i++) {
+            // 若成功取得 CSV 資料，開始解析
+            if (csvText) {
+                try {
+                    const csvData = parseCSVToArray(csvText);
+
+                    let tickerIdx = -1;
+                    let priceIdx = -1;
+                    let headerRowIdx = -1;
+                    let updateCount = 0;
+                    let isExchangeRateUpdated = false;
+
+                    // 第一階段：嚴謹地掃描尋找真正的表頭列 (鎖定 "代碼" 與 "PRICE")
+                    for (let i = 0; i < csvData.length; i++) {
                         const row = csvData[i];
-                        if (row[tickerIdx] && row[priceIdx]) {
-                            const ticker = row[tickerIdx].trim();
-                            // 移除數字中的千分位逗號與貨幣符號
-                            const priceStr = row[priceIdx].replace(/[",$\s]/g, '').trim();
-                            const price = parseFloat(priceStr);
+                        let tempTickerIdx = -1;
+                        let tempPriceIdx = -1;
 
-                            if (!isNaN(price) && ticker) {
-                                
-                                // 特殊判斷：如果是匯率資料 (代碼為 TWD)
-                                if (ticker === 'TWD') {
-                                    document.getElementById('exchangeRate').value = price.toFixed(4); // 顯示到小數第四位
-                                    isExchangeRateUpdated = true;
-                                    continue; // 更新完匯率直接換下一列
-                                }
+                        for (let j = 0; j < row.length; j++) {
+                            if (row[j] && row[j].trim() === '代碼') tempTickerIdx = j;
+                            if (row[j] && row[j].trim() === 'PRICE') tempPriceIdx = j;
+                        }
 
-                                // 尋找對應的投資組合標的 (支援直接比對，例如 TPE:0050)
-                                const portfolioItem = initialPortfolio.find(p => p.ticker === ticker);
-                                
-                                if (portfolioItem) {
-                                    portfolioItem.price = price;
+                        // 必須在「同一列」同時找到這兩個欄位，才認定為正確的表頭
+                        if (tempTickerIdx !== -1 && tempPriceIdx !== -1) {
+                            tickerIdx = tempTickerIdx;
+                            priceIdx = tempPriceIdx;
+                            headerRowIdx = i;
+                            break;
+                        }
+                    }
+
+                    // 第二階段：從表頭的下一列開始讀取正確的資料
+                    if (tickerIdx !== -1 && priceIdx !== -1) {
+                        for (let i = headerRowIdx + 1; i < csvData.length; i++) {
+                            const row = csvData[i];
+                            if (row[tickerIdx] && row[priceIdx]) {
+                                const ticker = row[tickerIdx].trim();
+                                // 移除數字中的千分位逗號與貨幣符號
+                                const priceStr = row[priceIdx].replace(/[",$\s]/g, '').trim();
+                                const price = parseFloat(priceStr);
+
+                                if (!isNaN(price) && ticker) {
                                     
-                                    // 同步更新網頁上的輸入框
-                                    const itemIndex = initialPortfolio.indexOf(portfolioItem);
-                                    const priceInput = document.getElementById(`price_${itemIndex}`);
-                                    if (priceInput) priceInput.value = price;
-                                    updateCount++;
+                                    // 特殊判斷：如果是匯率資料 (代碼為 TWD)
+                                    if (ticker === 'TWD') {
+                                        document.getElementById('exchangeRate').value = price.toFixed(4); // 顯示到小數第四位
+                                        isExchangeRateUpdated = true;
+                                        continue; // 更新完匯率直接換下一列
+                                    }
+
+                                    // 尋找對應的投資組合標的 (支援直接比對，例如 TPE:0050)
+                                    const portfolioItem = initialPortfolio.find(p => p.ticker === ticker);
+                                    
+                                    if (portfolioItem) {
+                                        portfolioItem.price = price;
+                                        
+                                        // 同步更新網頁上的輸入框
+                                        const itemIndex = initialPortfolio.indexOf(portfolioItem);
+                                        const priceInput = document.getElementById(`price_${itemIndex}`);
+                                        if (priceInput) priceInput.value = price;
+                                        updateCount++;
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                // 顯示結果
-                if (updateCount > 0) {
-                    let msg = `✅ 成功更新 ${updateCount} 筆報價`;
-                    if (isExchangeRateUpdated) msg += ` 及最新匯率`;
-                    msg += `！`;
-                    statusEl.innerText = msg;
-                    statusEl.style.color = '#27ae60';
-                } else {
-                    statusEl.innerText = `⚠️ 載入成功，但在「代碼」與「PRICE」欄位中未找到對應標的。`;
-                    statusEl.style.color = '#e67e22';
-                }
+                    // 顯示結果
+                    if (updateCount > 0) {
+                        let msg = `✅ 成功更新 ${updateCount} 筆報價`;
+                        if (isExchangeRateUpdated) msg += ` 及最新匯率`;
+                        msg += `！`;
+                        statusEl.innerText = msg;
+                        statusEl.style.color = '#27ae60';
+                    } else {
+                        statusEl.innerText = `⚠️ 載入成功，但在「代碼」與「PRICE」欄位中未找到對應標的。`;
+                        statusEl.style.color = '#e67e22';
+                    }
 
-            } catch (error) {
-                console.error('抓取 CSV 失敗:', error);
-                statusEl.innerText = `⚠️ 無法載入 Google Sheets 資料，請手動確認股價。`;
-                statusEl.style.color = '#e74c3c';
+                } catch (parseError) {
+                    console.error('解析 CSV 失敗:', parseError);
+                    statusEl.innerText = `⚠️ 解析 Google Sheets 資料時發生錯誤。`;
+                    statusEl.style.color = '#e74c3c';
+                }
+                
+                // 4秒後漸隱提示文字
+                setTimeout(() => { statusEl.style.opacity = '0'; }, 4000);
+
+                // 資料抓取並填入後，自動執行一次再平衡計算 (同時會觸發存檔)
+                calculateRebalance();
             }
-            
-            // 4秒後漸隱提示文字
-            setTimeout(() => { statusEl.style.opacity = '0'; }, 10000);
-
-            // 資料抓取並填入後，自動執行一次再平衡計算
-            calculateRebalance();
         }
 
         // 5. 初始化並產生表格內容
@@ -531,6 +559,7 @@
                 // 同步將畫面上的最新值寫回記憶體
                 item.targetWeight = targetWeight;
                 item.shares = shares;
+                item.price = price; // 同步最新股價以便存檔
                 
                 let valueUSD = 0;
                 let valueTWD = 0;
@@ -608,9 +637,9 @@
         window.onload = async () => {
             // 1. 先讀取上次存在瀏覽器的資料，覆蓋預設值
             loadFromLocalStorage();
-            // 2. 渲染表格
+            // 2. 渲染表格 (此時畫面上會先顯示上次最後的股價與匯率)
             renderTable();
-            // 3. 呼叫 Google Sheets 程式去更新最新的報價與匯率
+            // 3. 呼叫 Google Sheets 程式去背景更新最新的報價與匯率，若成功再覆蓋畫面
             await fetchPricesFromSheet();
         };
 
