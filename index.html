@@ -279,6 +279,59 @@
             { ticker: 'IBIT', currency: 'USD', targetWeight: 0, shares: 0, price: 45.00 }
         ];
 
+        // ================= LocalStorage 資料存取功能 =================
+        // 讀取本地儲存的設定與資料
+        function loadFromLocalStorage() {
+            try {
+                // 讀取基礎幣別設定
+                const savedCurrency = localStorage.getItem('baseCurrency');
+                if (savedCurrency) {
+                    const radioBtn = document.querySelector(`input[name="baseCurrency"][value="${savedCurrency}"]`);
+                    if (radioBtn) radioBtn.checked = true;
+                }
+
+                // 讀取各標的的股數與目標權重
+                const savedPortfolio = localStorage.getItem('portfolioData');
+                if (savedPortfolio) {
+                    const parsedData = JSON.parse(savedPortfolio);
+                    
+                    // 利用儲存的資料覆蓋 initialPortfolio 的預設值
+                    initialPortfolio.forEach(item => {
+                        const savedItem = parsedData.find(p => p.ticker === item.ticker);
+                        if (savedItem) {
+                            if (!isNaN(savedItem.targetWeight)) item.targetWeight = savedItem.targetWeight;
+                            if (!isNaN(savedItem.shares)) item.shares = savedItem.shares;
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error("讀取本地儲存失敗:", error);
+            }
+        }
+
+        // 將當前的設定與資料存入本地儲存
+        function saveToLocalStorage() {
+            try {
+                // 儲存基礎幣別設定
+                const baseCurrency = document.querySelector('input[name="baseCurrency"]:checked').value;
+                localStorage.setItem('baseCurrency', baseCurrency);
+
+                // 提取最新的股數與權重資料，準備存檔
+                const dataToSave = initialPortfolio.map(item => {
+                    return {
+                        ticker: item.ticker,
+                        targetWeight: item.targetWeight,
+                        shares: item.shares
+                    };
+                });
+                
+                localStorage.setItem('portfolioData', JSON.stringify(dataToSave));
+            } catch (error) {
+                console.error("寫入本地儲存失敗:", error);
+            }
+        }
+        // ==========================================================
+
         // 2. 格式化數字為貨幣字串的工具函式
         function formatCurrency(num, currencySymbol = '') {
             return currencySymbol + new Intl.NumberFormat('en-US', { 
@@ -415,7 +468,7 @@
             }
             
             // 4秒後漸隱提示文字
-            setTimeout(() => { statusEl.style.opacity = '0'; }, 4000);
+            setTimeout(() => { statusEl.style.opacity = '0'; }, 10000);
 
             // 資料抓取並填入後，自動執行一次再平衡計算
             calculateRebalance();
@@ -457,11 +510,15 @@
             let totalMarketValueTWD = 0;
             const updatedPortfolio = [];
 
-            // 第一階段：計算雙幣別市值
+            // 第一階段：將網頁上的最新輸入值更新回陣列，並計算雙幣別市值
             initialPortfolio.forEach((item, index) => {
                 const targetWeight = parseFloat(document.getElementById(`target_${index}`).value);
                 const shares = parseFloat(document.getElementById(`shares_${index}`).value);
                 const price = parseFloat(document.getElementById(`price_${index}`).value);
+                
+                // 同步將畫面上的最新值寫回記憶體
+                item.targetWeight = targetWeight;
+                item.shares = shares;
                 
                 let valueUSD = 0;
                 let valueTWD = 0;
@@ -489,6 +546,9 @@
                 });
             });
 
+            // 觸發本地儲存：只要有重新計算，就自動把最新的狀態存進瀏覽器
+            saveToLocalStorage();
+
             // 更新總資產顯示
             document.getElementById('totalValueUSD').innerText = formatCurrency(totalMarketValueUSD, '$');
             document.getElementById('totalValueTWD').innerText = formatCurrency(totalMarketValueTWD, 'NT$ ');
@@ -498,7 +558,8 @@
             // 第二階段：計算權重落差並給出買賣建議
             updatedPortfolio.forEach(item => {
                 const itemBaseValue = (baseCurrency === 'USD') ? item.valueUSD : item.valueTWD;
-                const currentWeight = (itemBaseValue / totalBaseValue) * 100;
+                // 預防除以零的狀況
+                const currentWeight = totalBaseValue > 0 ? (itemBaseValue / totalBaseValue) * 100 : 0;
                 
                 const currencySymbol = baseCurrency === 'USD' ? '$' : '';
                 document.getElementById(`marketValue_${item.index}`).innerText = formatCurrency(itemBaseValue, currencySymbol);
@@ -533,8 +594,11 @@
 
         // 網頁載入完成後的執行順序
         window.onload = async () => {
+            // 1. 先讀取上次存在瀏覽器的資料，覆蓋預設值
+            loadFromLocalStorage();
+            // 2. 渲染表格
             renderTable();
-            // 直接呼叫 Google Sheets 程式 (它現在會同時抓匯率跟股價！)
+            // 3. 呼叫 Google Sheets 程式去更新最新的報價與匯率
             await fetchPricesFromSheet();
         };
 
