@@ -42,7 +42,7 @@
             transition: opacity 0.5s;
         }
 
-        /* 總結區塊樣式 (已移至上方，調整間距) */
+        /* 總結區塊樣式 */
         .summary-box {
             margin-top: 10px;
             margin-bottom: 25px;
@@ -74,7 +74,7 @@
             font-size: 1.4em;
         }
 
-        /* 按鈕樣式 (調整上方與下方的間距以適應新位置) */
+        /* 按鈕樣式 */
         button {
             display: block;
             width: 280px;
@@ -205,7 +205,7 @@
         
         <div id="loadingStatus">準備載入資料...</div>
 
-        <!-- 總資產顯示區塊 (移至上方) -->
+        <!-- 總資產顯示區塊 -->
         <div class="summary-box">
             <div class="summary-item">
                 <span>總資產市值 (美金)</span>
@@ -217,7 +217,7 @@
             </div>
         </div>
         
-        <!-- 手動觸發計算按鈕 (移至上方) -->
+        <!-- 手動觸發計算按鈕 -->
         <button onclick="calculateRebalance()">執行再平衡計算</button>
 
         <!-- 設定面板：匯率與基礎幣別切換 -->
@@ -225,8 +225,8 @@
             <div class="setting-group">
                 <label for="exchangeRate">USD/TWD 匯率：</label>
                 <!-- 當匯率改變時，自動重新計算 -->
-                <input type="number" id="exchangeRate" value="31.74" step="0.01" onchange="calculateRebalance()">
-                <small style="color: #27ae60; font-size: 0.85em; margin-left: 5px;">(會自動更新，亦可手動修改)</small>
+                <input type="number" id="exchangeRate" value="31.74" step="0.0001" onchange="calculateRebalance()">
+                <small style="color: #27ae60; font-size: 0.85em; margin-left: 5px;">(已同步 Google Sheet 匯率)</small>
             </div>
             <div class="setting-group">
                 <label>計算基礎幣別：</label>
@@ -264,16 +264,16 @@
     </div>
 
     <script>
-        // 1. 預設投資組合資料 (已包含所有新增標的)
+        // 1. 預設投資組合資料 (已對齊您的 CSV 代碼格式，例如 TPE:0050)
         let initialPortfolio = [
             { ticker: 'VT', currency: 'USD', targetWeight: 57, shares: 4700, price: 140.40 },
             { ticker: 'VGIT', currency: 'USD', targetWeight: 23.5, shares: 4300, price: 59.98 },
-            { ticker: '006208', currency: 'TWD', targetWeight: 18, shares: 45000, price: 170.00 },
+            { ticker: 'TPE:006208', currency: 'TWD', targetWeight: 18, shares: 45000, price: 170.00 },
             { ticker: 'BNDX', currency: 'USD', targetWeight: 1.5, shares: 350, price: 49.00 },
-            { ticker: '0050', currency: 'TWD', targetWeight: 0, shares: 0, price: 200.00 },
-            { ticker: '0056', currency: 'TWD', targetWeight: 0, shares: 0, price: 40.00 },
-            { ticker: '00757', currency: 'TWD', targetWeight: 0, shares: 0, price: 90.00 },
-            { ticker: '00646', currency: 'TWD', targetWeight: 0, shares: 0, price: 50.00 },
+            { ticker: 'TPE:0050', currency: 'TWD', targetWeight: 0, shares: 0, price: 200.00 },
+            { ticker: 'TPE:0056', currency: 'TWD', targetWeight: 0, shares: 0, price: 40.00 },
+            { ticker: 'TPE:00757', currency: 'TWD', targetWeight: 0, shares: 0, price: 90.00 },
+            { ticker: 'TPE:00646', currency: 'TWD', targetWeight: 0, shares: 0, price: 50.00 },
             { ticker: 'VOO', currency: 'USD', targetWeight: 0, shares: 0, price: 550.00 },
             { ticker: 'GLD', currency: 'USD', targetWeight: 0, shares: 0, price: 260.00 },
             { ticker: 'IBIT', currency: 'USD', targetWeight: 0, shares: 0, price: 45.00 }
@@ -287,111 +287,130 @@
             }).format(num);
         }
 
-        // 3. 從 Yahoo Finance 自動抓取最新 USD/TWD 匯率
-        async function fetchExchangeRate() {
-            const statusEl = document.getElementById('loadingStatus');
-            const rateInput = document.getElementById('exchangeRate');
-            
-            statusEl.style.opacity = '1';
-            statusEl.innerText = '正在獲取最新 USD/TWD 匯率...';
-            statusEl.style.color = '#2980b9';
-
-            try {
-                // TWD=X 為 Yahoo Finance 中美金兌台幣的代號
-                const timestamp = new Date().getTime();
-                const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/TWD=X?interval=1d&range=1d&t=${timestamp}`;
-                const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`;
-
-                const response = await fetch(proxyUrl);
-                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-                
-                const parsedData = await response.json();
-                
-                if (parsedData.chart && parsedData.chart.result && parsedData.chart.result.length > 0) {
-                    const currentRate = parsedData.chart.result[0].meta.regularMarketPrice;
-                    if (currentRate && !isNaN(currentRate)) {
-                        rateInput.value = currentRate.toFixed(2);
-                    }
+        // 3. 解析 CSV 格式的進階函式
+        function parseCSVToArray(strData) {
+            const objPattern = new RegExp((
+                "(\\,|\\r?\\n|\\r|^)" +
+                "(?:\"([^\"]*(?:\"\"[^\"]*)*)\"|" +
+                "([^\"\\,\\r\\n]*))"
+            ), "gi");
+            let arrData = [[]];
+            let arrMatches = null;
+            while (arrMatches = objPattern.exec(strData)) {
+                const strMatchedDelimiter = arrMatches[1];
+                if (strMatchedDelimiter.length && strMatchedDelimiter !== ",") {
+                    arrData.push([]);
                 }
-            } catch (error) {
-                console.error(`抓取匯率失敗:`, error);
-                // 若抓取失敗則保留原有的預設值
+                let strMatchedValue;
+                if (arrMatches[2]) {
+                    strMatchedValue = arrMatches[2].replace(new RegExp("\"\"", "g"), "\"");
+                } else {
+                    strMatchedValue = arrMatches[3];
+                }
+                arrData[arrData.length - 1].push(strMatchedValue);
             }
-            
-            // 暫停一小段時間避免請求過於密集，被伺服器阻擋
-            await new Promise(resolve => setTimeout(resolve, 300));
+            return arrData;
         }
 
-        // 4. 從 Yahoo Finance 抓取即時/延遲股價資料
-        async function fetchPricesFromYahoo() {
+        // 4. 從 Google Sheets (CSV) 抓取報價與匯率資料
+        async function fetchPricesFromSheet() {
             const statusEl = document.getElementById('loadingStatus');
             statusEl.style.opacity = '1';
-            statusEl.innerText = '正在從 Yahoo Finance 抓取最新報價...';
+            statusEl.innerText = '正在從 Google Sheets 抓取最新報價與匯率...';
             statusEl.style.color = '#2980b9';
 
-            let updateCount = 0;
-            let failedTickers = []; // 紀錄失敗的標的
+            // 將 /pubhtml 自動替換為 /pub?output=csv 以便讀取原始資料
+            const originalUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSJZCi_7qDOKVxzzZ2GsglxSChQH-fRlii2tQoRb3a-v_GxSfGims6tfm9q1fyoWOZxjiHN72Qofakr/pub?output=csv';
+            
+            // 使用 allorigins 代理伺服器繞過本地端瀏覽器的 CORS 阻擋
+            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(originalUrl)}`;
 
-            // 針對每一檔標的進行 API 請求
-            for (let i = 0; i < initialPortfolio.length; i++) {
-                const item = initialPortfolio[i];
-                
-                // 處理台股代號邏輯
-                let yahooSymbol = item.ticker;
-                if (/^\d{4,6}$/.test(item.ticker)) {
-                    yahooSymbol = item.ticker + '.TW'; 
-                }
-
-                // 加入時間戳記 (Cache Buster) 強制繞過代理伺服器的舊快取
+            try {
+                // 加入時間戳記避免讀取到舊快取
                 const timestamp = new Date().getTime();
-                const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?interval=1d&range=1d&t=${timestamp}`;
+                const response = await fetch(`${proxyUrl}&t=${timestamp}`);
+                if (!response.ok) throw new Error('無法取得 Google Sheets 資料');
                 
-                // 改用 allorigins 的 raw 模式，直接處理 JSON，降低解析失敗率
-                const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`;
+                const csvText = await response.text();
+                const csvData = parseCSVToArray(csvText);
 
-                try {
-                    const response = await fetch(proxyUrl);
-                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-                    
-                    const parsedData = await response.json();
-                    
-                    if (parsedData.chart && parsedData.chart.result && parsedData.chart.result.length > 0) {
-                        const currentPrice = parsedData.chart.result[0].meta.regularMarketPrice;
-                        
-                        if (currentPrice && !isNaN(currentPrice)) {
-                            // 更新內部資料
-                            item.price = currentPrice;
-                            
-                            // 同步更新網頁上的輸入框
-                            const priceInput = document.getElementById(`price_${i}`);
-                            if (priceInput) {
-                                priceInput.value = currentPrice.toFixed(2);
-                            }
-                            updateCount++;
-                        } else {
-                            throw new Error('無法取得有效價格');
-                        }
-                    } else {
-                        throw new Error('API回傳資料格式不符');
+                let tickerIdx = -1;
+                let priceIdx = -1;
+                let headerRowIdx = -1;
+                let updateCount = 0;
+                let isExchangeRateUpdated = false;
+
+                // 第一階段：嚴謹地掃描尋找真正的表頭列 (鎖定 "代碼" 與 "PRICE")
+                for (let i = 0; i < csvData.length; i++) {
+                    const row = csvData[i];
+                    let tempTickerIdx = -1;
+                    let tempPriceIdx = -1;
+
+                    for (let j = 0; j < row.length; j++) {
+                        if (row[j] && row[j].trim() === '代碼') tempTickerIdx = j;
+                        if (row[j] && row[j].trim() === 'PRICE') tempPriceIdx = j;
                     }
-                } catch (error) {
-                    console.error(`抓取 ${item.ticker} 失敗:`, error);
-                    failedTickers.push(item.ticker); // 紀錄沒抓到的代號
+
+                    // 必須在「同一列」同時找到這兩個欄位，才認定為正確的表頭
+                    if (tempTickerIdx !== -1 && tempPriceIdx !== -1) {
+                        tickerIdx = tempTickerIdx;
+                        priceIdx = tempPriceIdx;
+                        headerRowIdx = i;
+                        break;
+                    }
                 }
 
-                // ⚠️ 關鍵優化：每抓完一檔暫停 300 毫秒，避免請求過快被封鎖
-                await new Promise(resolve => setTimeout(resolve, 300));
-            }
+                // 第二階段：從表頭的下一列開始讀取正確的資料
+                if (tickerIdx !== -1 && priceIdx !== -1) {
+                    for (let i = headerRowIdx + 1; i < csvData.length; i++) {
+                        const row = csvData[i];
+                        if (row[tickerIdx] && row[priceIdx]) {
+                            const ticker = row[tickerIdx].trim();
+                            // 移除數字中的千分位逗號與貨幣符號
+                            const priceStr = row[priceIdx].replace(/[",$\s]/g, '').trim();
+                            const price = parseFloat(priceStr);
 
-            // 更新畫面提示狀態 (明確列出成功與失敗的項目)
-            if (updateCount === initialPortfolio.length) {
-                statusEl.innerText = `✅ 成功從 Yahoo Finance 更新 ${updateCount} 筆報價！`;
-                statusEl.style.color = '#27ae60';
-            } else if (updateCount > 0) {
-                statusEl.innerText = `⚠️ 部分更新成功。未更新標的: ${failedTickers.join(', ')}`;
-                statusEl.style.color = '#e67e22';
-            } else {
-                statusEl.innerText = `⚠️ 報價載入失敗，請檢查網路狀態或手動確認股價。`;
+                            if (!isNaN(price) && ticker) {
+                                
+                                // 特殊判斷：如果是匯率資料 (代碼為 TWD)
+                                if (ticker === 'TWD') {
+                                    document.getElementById('exchangeRate').value = price.toFixed(4); // 顯示到小數第四位
+                                    isExchangeRateUpdated = true;
+                                    continue; // 更新完匯率直接換下一列
+                                }
+
+                                // 尋找對應的投資組合標的 (支援直接比對，例如 TPE:0050)
+                                const portfolioItem = initialPortfolio.find(p => p.ticker === ticker);
+                                
+                                if (portfolioItem) {
+                                    portfolioItem.price = price;
+                                    
+                                    // 同步更新網頁上的輸入框
+                                    const itemIndex = initialPortfolio.indexOf(portfolioItem);
+                                    const priceInput = document.getElementById(`price_${itemIndex}`);
+                                    if (priceInput) priceInput.value = price;
+                                    updateCount++;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 顯示結果
+                if (updateCount > 0) {
+                    let msg = `✅ 成功更新 ${updateCount} 筆報價`;
+                    if (isExchangeRateUpdated) msg += ` 及最新匯率`;
+                    msg += `！`;
+                    statusEl.innerText = msg;
+                    statusEl.style.color = '#27ae60';
+                } else {
+                    statusEl.innerText = `⚠️ 載入成功，但在「代碼」與「PRICE」欄位中未找到對應標的。`;
+                    statusEl.style.color = '#e67e22';
+                }
+
+            } catch (error) {
+                console.error('抓取 CSV 失敗:', error);
+                statusEl.innerText = `⚠️ 無法載入 Google Sheets 資料，請手動確認股價。`;
                 statusEl.style.color = '#e74c3c';
             }
             
@@ -402,7 +421,7 @@
             calculateRebalance();
         }
 
-        // 4. 初始化並產生表格內容
+        // 5. 初始化並產生表格內容
         function renderTable() {
             const tableBody = document.getElementById('tableBody');
             tableBody.innerHTML = '';
@@ -427,7 +446,7 @@
             calculateRebalance();
         }
 
-        // 5. 核心計算邏輯
+        // 6. 核心計算邏輯
         function calculateRebalance() {
             const exchangeRate = parseFloat(document.getElementById('exchangeRate').value);
             const baseCurrency = document.querySelector('input[name="baseCurrency"]:checked').value;
@@ -515,10 +534,8 @@
         // 網頁載入完成後的執行順序
         window.onload = async () => {
             renderTable();
-            // 先呼叫 Yahoo Finance 抓取最新匯率
-            await fetchExchangeRate();
-            // 再呼叫 Yahoo Finance 抓取股價程式
-            await fetchPricesFromYahoo();
+            // 直接呼叫 Google Sheets 程式 (它現在會同時抓匯率跟股價！)
+            await fetchPricesFromSheet();
         };
 
     </script>
