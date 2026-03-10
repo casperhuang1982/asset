@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>資產配置與再平衡監控系統</title>
+    <style>
+        /* 整體網頁樣式設定 */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f7fa;
+            color: #333;
+            padding: 30px;
+            line-height: 1.6;
+        }
+        
+        /* 主容器樣式 */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: #ffffff;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+        }
+
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 20px;
+            font-size: 2em;
+        }
+
+        /* 狀態提示文字 */
+        #loadingStatus {
+            color: #e67e22;
+            font-weight: bold;
+            font-size: 1.1em;
+            text-align: center;
+            margin-bottom: 15px;
+            height: 24px;
+            transition: opacity 0.5s;
+        }
+
+        /* 總結區塊樣式 (已移至上方，調整間距) */
+        .summary-box {
+            margin-top: 10px;
+            margin-bottom: 25px;
+            padding: 25px;
+            background-color: #f8f9fa;
+            border-left: 6px solid #2980b9;
+            border-radius: 6px;
+            font-size: 1.3em;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.02);
+        }
+
+        .summary-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .summary-item span {
+            font-size: 0.8em;
+            color: #7f8c8d;
+            margin-bottom: 5px;
+        }
+
+        .summary-item strong {
+            color: #2c3e50;
+            font-size: 1.4em;
+        }
+
+        /* 按鈕樣式 (調整上方與下方的間距以適應新位置) */
+        button {
+            display: block;
+            width: 280px;
+            margin: 0 auto 35px auto;
+            padding: 15px;
+            background-color: #2980b9;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.2em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.1s;
+            box-shadow: 0 4px 6px rgba(41, 128, 185, 0.3);
+        }
+
+        button:hover {
+            background-color: #3498db;
+        }
+
+        button:active {
+            transform: translateY(2px);
+            box-shadow: 0 2px 3px rgba(41, 128, 185, 0.3);
+        }
+
+        /* 設定面板區域 */
+        .settings-panel {
+            background-color: #ecf0f1;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 25px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
+        .setting-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 1.1em;
+        }
+
+        /* 表格樣式 */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            background-color: #fff;
+        }
+
+        th, td {
+            padding: 15px 12px;
+            text-align: right;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        th {
+            background-color: #34495e;
+            color: #ffffff;
+            text-align: center;
+            font-weight: 500;
+            font-size: 1.05em;
+        }
+
+        td:first-child {
+            text-align: left;
+            font-weight: bold;
+            color: #2980b9;
+            font-size: 1.1em;
+        }
+
+        /* 買賣建議的文字顏色 */
+        .action-buy {
+            color: #27ae60;
+            font-weight: bold;
+            background-color: #eafaf1;
+            padding: 5px 10px;
+            border-radius: 4px;
+        }
+
+        .action-sell {
+            color: #e74c3c;
+            font-weight: bold;
+            background-color: #fdedec;
+            padding: 5px 10px;
+            border-radius: 4px;
+        }
+
+        .action-none {
+            color: #95a5a6;
+        }
+
+        /* 輸入框樣式 */
+        input[type="number"] {
+            width: 100px;
+            padding: 8px 10px;
+            text-align: right;
+            border: 1px solid #bdc3c7;
+            border-radius: 4px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        input[type="number"]:focus {
+            border-color: #3498db;
+            outline: none;
+        }
+        
+        /* Radio 按鈕樣式微調 */
+        input[type="radio"] {
+            transform: scale(1.2);
+            margin-right: 5px;
+            cursor: pointer;
+        }
+        
+        label {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>資產配置與再平衡監控</h1>
+        
+        <div id="loadingStatus">準備載入資料...</div>
+
+        <!-- 總資產顯示區塊 (移至上方) -->
+        <div class="summary-box">
+            <div class="summary-item">
+                <span>總資產市值 (美金)</span>
+                <strong id="totalValueUSD">$0.00</strong>
+            </div>
+            <div class="summary-item">
+                <span>總資產市值 (台幣)</span>
+                <strong id="totalValueTWD">NT$ 0</strong>
+            </div>
+        </div>
+        
+        <!-- 手動觸發計算按鈕 (移至上方) -->
+        <button onclick="calculateRebalance()">執行再平衡計算</button>
+
+        <!-- 設定面板：匯率與基礎幣別切換 -->
+        <div class="settings-panel">
+            <div class="setting-group">
+                <label for="exchangeRate">USD/TWD 匯率：</label>
+                <!-- 當匯率改變時，自動重新計算 -->
+                <input type="number" id="exchangeRate" value="31.74" step="0.01" onchange="calculateRebalance()">
+            </div>
+            <div class="setting-group">
+                <label>計算基礎幣別：</label>
+                <!-- 當切換幣別時，自動重新計算 -->
+                <label>
+                    <input type="radio" name="baseCurrency" value="USD" checked onchange="calculateRebalance()"> 
+                    美金 (USD)
+                </label>
+                <label style="margin-left: 15px;">
+                    <input type="radio" name="baseCurrency" value="TWD" onchange="calculateRebalance()"> 
+                    台幣 (TWD)
+                </label>
+            </div>
+        </div>
+
+        <!-- 資產配置表格 -->
+        <table id="portfolioTable">
+            <thead>
+                <tr>
+                    <th>標的 (Ticker)</th>
+                    <th>計價幣別</th>
+                    <th>目標權重 (%)</th>
+                    <th>目前股數</th>
+                    <th>目前股價</th>
+                    <th id="marketValueHeader">目前市值 (USD)</th>
+                    <th>目前權重 (%)</th>
+                    <th>建議動作 (股數)</th>
+                </tr>
+            </thead>
+            <tbody id="tableBody">
+                <!-- JavaScript 會在這裡動態產生資料列 -->
+            </tbody>
+        </table>
+        
+    </div>
+
+    <script>
+        // 1. 預設投資組合資料 (已包含所有新增標的)
+        let initialPortfolio = [
+            { ticker: 'VT', currency: 'USD', targetWeight: 60, shares: 4700, price: 140.40 },
+            { ticker: 'VGIT', currency: 'USD', targetWeight: 20, shares: 4300, price: 59.98 },
+            { ticker: '006208', currency: 'TWD', targetWeight: 20, shares: 45000, price: 170.00 },
+            { ticker: 'BNDX', currency: 'USD', targetWeight: 1.5, shares: 350, price: 49.00 },
+            { ticker: '0050', currency: 'TWD', targetWeight: 0, shares: 0, price: 200.00 },
+            { ticker: '0056', currency: 'TWD', targetWeight: 0, shares: 0, price: 40.00 },
+            { ticker: '00757', currency: 'TWD', targetWeight: 0, shares: 0, price: 90.00 },
+            { ticker: '00646', currency: 'TWD', targetWeight: 0, shares: 0, price: 50.00 },
+            { ticker: 'VOO', currency: 'USD', targetWeight: 0, shares: 0, price: 550.00 },
+            { ticker: 'GLD', currency: 'USD', targetWeight: 0, shares: 0, price: 260.00 },
+            { ticker: 'IBIT', currency: 'USD', targetWeight: 0, shares: 0, price: 45.00 }
+        ];
+
+        // 2. 格式化數字為貨幣字串的工具函式
+        function formatCurrency(num, currencySymbol = '') {
+            return currencySymbol + new Intl.NumberFormat('en-US', { 
+                minimumFractionDigits: 2, 
+                maximumFractionDigits: 2 
+            }).format(num);
+        }
+
+        // 3. 從 Yahoo Finance 抓取即時/延遲股價資料
+        async function fetchPricesFromYahoo() {
+            const statusEl = document.getElementById('loadingStatus');
+            statusEl.style.opacity = '1';
+            statusEl.innerText = '正在從 Yahoo Finance 抓取最新報價...';
+            statusEl.style.color = '#2980b9';
+
+            let updateCount = 0;
+            let failedTickers = []; // 紀錄失敗的標的
+
+            // 針對每一檔標的進行 API 請求
+            for (let i = 0; i < initialPortfolio.length; i++) {
+                const item = initialPortfolio[i];
+                
+                // 處理台股代號邏輯
+                let yahooSymbol = item.ticker;
+                if (/^\d{4,6}$/.test(item.ticker)) {
+                    yahooSymbol = item.ticker + '.TW'; 
+                }
+
+                // 加入時間戳記 (Cache Buster) 強制繞過代理伺服器的舊快取
+                const timestamp = new Date().getTime();
+                const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?interval=1d&range=1d&t=${timestamp}`;
+                
+                // 改用 allorigins 的 raw 模式，直接處理 JSON，降低解析失敗率
+                const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`;
+
+                try {
+                    const response = await fetch(proxyUrl);
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    
+                    const parsedData = await response.json();
+                    
+                    if (parsedData.chart && parsedData.chart.result && parsedData.chart.result.length > 0) {
+                        const currentPrice = parsedData.chart.result[0].meta.regularMarketPrice;
+                        
+                        if (currentPrice && !isNaN(currentPrice)) {
+                            // 更新內部資料
+                            item.price = currentPrice;
+                            
+                            // 同步更新網頁上的輸入框
+                            const priceInput = document.getElementById(`price_${i}`);
+                            if (priceInput) {
+                                priceInput.value = currentPrice.toFixed(2);
+                            }
+                            updateCount++;
+                        } else {
+                            throw new Error('無法取得有效價格');
+                        }
+                    } else {
+                        throw new Error('API回傳資料格式不符');
+                    }
+                } catch (error) {
+                    console.error(`抓取 ${item.ticker} 失敗:`, error);
+                    failedTickers.push(item.ticker); // 紀錄沒抓到的代號
+                }
+
+                // ⚠️ 關鍵優化：每抓完一檔暫停 300 毫秒，避免請求過快被封鎖
+                await new Promise(resolve => setTimeout(resolve, 300));
+            }
+
+            // 更新畫面提示狀態 (明確列出成功與失敗的項目)
+            if (updateCount === initialPortfolio.length) {
+                statusEl.innerText = `✅ 成功從 Yahoo Finance 更新 ${updateCount} 筆報價！`;
+                statusEl.style.color = '#27ae60';
+            } else if (updateCount > 0) {
+                statusEl.innerText = `⚠️ 部分更新成功。未更新標的: ${failedTickers.join(', ')}`;
+                statusEl.style.color = '#e67e22';
+            } else {
+                statusEl.innerText = `⚠️ 報價載入失敗，請檢查網路狀態或手動確認股價。`;
+                statusEl.style.color = '#e74c3c';
+            }
+            
+            // 4秒後漸隱提示文字
+            setTimeout(() => { statusEl.style.opacity = '0'; }, 4000);
+
+            // 資料抓取並填入後，自動執行一次再平衡計算
+            calculateRebalance();
+        }
+
+        // 4. 初始化並產生表格內容
+        function renderTable() {
+            const tableBody = document.getElementById('tableBody');
+            tableBody.innerHTML = '';
+
+            initialPortfolio.forEach((item, index) => {
+                const tr = document.createElement('tr');
+                
+                tr.innerHTML = `
+                    <td>${item.ticker}</td>
+                    <td style="text-align: center;">${item.currency}</td>
+                    <td><input type="number" id="target_${index}" value="${item.targetWeight}" step="0.1" onchange="calculateRebalance()"></td>
+                    <td><input type="number" id="shares_${index}" value="${item.shares}" onchange="calculateRebalance()"></td>
+                    <td><input type="number" id="price_${index}" value="${item.price}" step="0.01" onchange="calculateRebalance()"></td>
+                    <td id="marketValue_${index}">-</td>
+                    <td id="currentWeight_${index}">-</td>
+                    <td id="action_${index}">-</td>
+                `;
+                tableBody.appendChild(tr);
+            });
+            
+            // 初始宣染後先算一次預設值
+            calculateRebalance();
+        }
+
+        // 5. 核心計算邏輯
+        function calculateRebalance() {
+            const exchangeRate = parseFloat(document.getElementById('exchangeRate').value);
+            const baseCurrency = document.querySelector('input[name="baseCurrency"]:checked').value;
+            
+            document.getElementById('marketValueHeader').innerText = `目前市值 (${baseCurrency})`;
+
+            let totalMarketValueUSD = 0;
+            let totalMarketValueTWD = 0;
+            const updatedPortfolio = [];
+
+            // 第一階段：計算雙幣別市值
+            initialPortfolio.forEach((item, index) => {
+                const targetWeight = parseFloat(document.getElementById(`target_${index}`).value);
+                const shares = parseFloat(document.getElementById(`shares_${index}`).value);
+                const price = parseFloat(document.getElementById(`price_${index}`).value);
+                
+                let valueUSD = 0;
+                let valueTWD = 0;
+
+                if (item.currency === 'USD') {
+                    valueUSD = shares * price;
+                    valueTWD = valueUSD * exchangeRate;
+                } else if (item.currency === 'TWD') {
+                    valueTWD = shares * price;
+                    valueUSD = valueTWD / exchangeRate;
+                }
+
+                totalMarketValueUSD += valueUSD;
+                totalMarketValueTWD += valueTWD;
+
+                updatedPortfolio.push({
+                    index: index,
+                    ticker: item.ticker,
+                    currency: item.currency,
+                    targetWeight: targetWeight,
+                    shares: shares,
+                    price: price,
+                    valueUSD: valueUSD,
+                    valueTWD: valueTWD
+                });
+            });
+
+            // 更新總資產顯示
+            document.getElementById('totalValueUSD').innerText = formatCurrency(totalMarketValueUSD, '$');
+            document.getElementById('totalValueTWD').innerText = formatCurrency(totalMarketValueTWD, 'NT$ ');
+
+            const totalBaseValue = (baseCurrency === 'USD') ? totalMarketValueUSD : totalMarketValueTWD;
+
+            // 第二階段：計算權重落差並給出買賣建議
+            updatedPortfolio.forEach(item => {
+                const itemBaseValue = (baseCurrency === 'USD') ? item.valueUSD : item.valueTWD;
+                const currentWeight = (itemBaseValue / totalBaseValue) * 100;
+                
+                const currencySymbol = baseCurrency === 'USD' ? '$' : '';
+                document.getElementById(`marketValue_${item.index}`).innerText = formatCurrency(itemBaseValue, currencySymbol);
+                document.getElementById(`currentWeight_${item.index}`).innerText = currentWeight.toFixed(2) + '%';
+
+                const targetBaseValue = totalBaseValue * (item.targetWeight / 100);
+                const differenceBaseValue = targetBaseValue - itemBaseValue;
+
+                let differenceShares = 0;
+
+                if (item.currency === 'USD') {
+                    const diffUSD = (baseCurrency === 'USD') ? differenceBaseValue : (differenceBaseValue / exchangeRate);
+                    differenceShares = diffUSD / item.price;
+                } else if (item.currency === 'TWD') {
+                    const diffTWD = (baseCurrency === 'TWD') ? differenceBaseValue : (differenceBaseValue * exchangeRate);
+                    differenceShares = diffTWD / item.price;
+                }
+
+                let actionText = '';
+                // 誤差大於 0.5 股才顯示買賣建議，避免微小碎股的頻繁交易
+                if (differenceShares > 0.5) {
+                    actionText = `<span class="action-buy">買入 ${Math.round(differenceShares).toLocaleString()} 股</span>`;
+                } else if (differenceShares < -0.5) {
+                    actionText = `<span class="action-sell">賣出 ${Math.abs(Math.round(differenceShares)).toLocaleString()} 股</span>`;
+                } else {
+                    actionText = '<span class="action-none">無需調整</span>';
+                }
+
+                document.getElementById(`action_${item.index}`).innerHTML = actionText;
+            });
+        }
+
+        // 6. 網頁載入完成後的執行順序
+        window.onload = async () => {
+            renderTable();
+            // 改為呼叫 Yahoo Finance 抓取程式
+            await fetchPricesFromYahoo();
+        };
+
+    </script>
+</body>
+</html>
