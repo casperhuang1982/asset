@@ -226,6 +226,7 @@
                 <label for="exchangeRate">USD/TWD 匯率：</label>
                 <!-- 當匯率改變時，自動重新計算 -->
                 <input type="number" id="exchangeRate" value="31.74" step="0.01" onchange="calculateRebalance()">
+                <small style="color: #27ae60; font-size: 0.85em; margin-left: 5px;">(會自動更新，亦可手動修改)</small>
             </div>
             <div class="setting-group">
                 <label>計算基礎幣別：</label>
@@ -265,9 +266,9 @@
     <script>
         // 1. 預設投資組合資料 (已包含所有新增標的)
         let initialPortfolio = [
-            { ticker: 'VT', currency: 'USD', targetWeight: 60, shares: 4700, price: 140.40 },
-            { ticker: 'VGIT', currency: 'USD', targetWeight: 20, shares: 4300, price: 59.98 },
-            { ticker: '006208', currency: 'TWD', targetWeight: 20, shares: 45000, price: 170.00 },
+            { ticker: 'VT', currency: 'USD', targetWeight: 57, shares: 4700, price: 140.40 },
+            { ticker: 'VGIT', currency: 'USD', targetWeight: 23.5, shares: 4300, price: 59.98 },
+            { ticker: '006208', currency: 'TWD', targetWeight: 18, shares: 45000, price: 170.00 },
             { ticker: 'BNDX', currency: 'USD', targetWeight: 1.5, shares: 350, price: 49.00 },
             { ticker: '0050', currency: 'TWD', targetWeight: 0, shares: 0, price: 200.00 },
             { ticker: '0056', currency: 'TWD', targetWeight: 0, shares: 0, price: 40.00 },
@@ -286,7 +287,42 @@
             }).format(num);
         }
 
-        // 3. 從 Yahoo Finance 抓取即時/延遲股價資料
+        // 3. 從 Yahoo Finance 自動抓取最新 USD/TWD 匯率
+        async function fetchExchangeRate() {
+            const statusEl = document.getElementById('loadingStatus');
+            const rateInput = document.getElementById('exchangeRate');
+            
+            statusEl.style.opacity = '1';
+            statusEl.innerText = '正在獲取最新 USD/TWD 匯率...';
+            statusEl.style.color = '#2980b9';
+
+            try {
+                // TWD=X 為 Yahoo Finance 中美金兌台幣的代號
+                const timestamp = new Date().getTime();
+                const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/TWD=X?interval=1d&range=1d&t=${timestamp}`;
+                const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`;
+
+                const response = await fetch(proxyUrl);
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                
+                const parsedData = await response.json();
+                
+                if (parsedData.chart && parsedData.chart.result && parsedData.chart.result.length > 0) {
+                    const currentRate = parsedData.chart.result[0].meta.regularMarketPrice;
+                    if (currentRate && !isNaN(currentRate)) {
+                        rateInput.value = currentRate.toFixed(2);
+                    }
+                }
+            } catch (error) {
+                console.error(`抓取匯率失敗:`, error);
+                // 若抓取失敗則保留原有的預設值
+            }
+            
+            // 暫停一小段時間避免請求過於密集，被伺服器阻擋
+            await new Promise(resolve => setTimeout(resolve, 300));
+        }
+
+        // 4. 從 Yahoo Finance 抓取即時/延遲股價資料
         async function fetchPricesFromYahoo() {
             const statusEl = document.getElementById('loadingStatus');
             statusEl.style.opacity = '1';
@@ -476,10 +512,12 @@
             });
         }
 
-        // 6. 網頁載入完成後的執行順序
+        // 網頁載入完成後的執行順序
         window.onload = async () => {
             renderTable();
-            // 改為呼叫 Yahoo Finance 抓取程式
+            // 先呼叫 Yahoo Finance 抓取最新匯率
+            await fetchExchangeRate();
+            // 再呼叫 Yahoo Finance 抓取股價程式
             await fetchPricesFromYahoo();
         };
 
