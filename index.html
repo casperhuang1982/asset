@@ -290,7 +290,13 @@
                     if (radioBtn) radioBtn.checked = true;
                 }
 
-                // 讀取各標的的股數與目標權重
+                // 讀取上次紀錄的匯率
+                const savedExchangeRate = localStorage.getItem('exchangeRate');
+                if (savedExchangeRate) {
+                    document.getElementById('exchangeRate').value = savedExchangeRate;
+                }
+
+                // 讀取各標的的股數、目標權重與「上次的股價」
                 const savedPortfolio = localStorage.getItem('portfolioData');
                 if (savedPortfolio) {
                     const parsedData = JSON.parse(savedPortfolio);
@@ -301,6 +307,7 @@
                         if (savedItem) {
                             if (!isNaN(savedItem.targetWeight)) item.targetWeight = savedItem.targetWeight;
                             if (!isNaN(savedItem.shares)) item.shares = savedItem.shares;
+                            if (!isNaN(savedItem.price)) item.price = savedItem.price; // 讀取並覆蓋為上次的股價
                         }
                     });
                 }
@@ -316,12 +323,17 @@
                 const baseCurrency = document.querySelector('input[name="baseCurrency"]:checked').value;
                 localStorage.setItem('baseCurrency', baseCurrency);
 
-                // 提取最新的股數與權重資料，準備存檔
+                // 儲存當前的匯率
+                const exchangeRate = document.getElementById('exchangeRate').value;
+                localStorage.setItem('exchangeRate', exchangeRate);
+
+                // 提取最新的股數、權重與「最新股價」資料，準備存檔
                 const dataToSave = initialPortfolio.map(item => {
                     return {
                         ticker: item.ticker,
                         targetWeight: item.targetWeight,
-                        shares: item.shares
+                        shares: item.shares,
+                        price: item.price // 儲存當前的股價
                     };
                 });
                 
