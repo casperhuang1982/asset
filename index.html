@@ -195,7 +195,7 @@
   .addrow input[name="target"] { width: 80px; }
   .hint { font-size: 12px; color: var(--text-muted); }
 
-  .rowerr { color: var(--status-crit); font-size: 11px; }
+  .rowerr { color: var(--status-crit); font-size: 11px; display: block; }
   footer { color: var(--text-muted); font-size: 12px; margin-top: 20px; line-height: 1.7; }
   #status { font-size: 13px; color: var(--text-secondary); min-height: 1.4em; margin-top: 8px; }
   .del { color: var(--text-muted); border: none; background: none; font-size: 15px; padding: 2px 6px; }
@@ -228,7 +228,10 @@
     <div class="card kpi">
       <div class="label">USD / TWD 匯率 <span class="badge" id="fxBadge">自動</span></div>
       <div class="value"><input class="inline num" type="number" step="0.001" id="fxInput"></div>
-      <div class="note"><button class="small" id="fxAutoBtn">恢復自動匯率</button></div>
+      <div class="note">
+        <button class="small" id="fxAutoBtn">恢復自動匯率</button>
+        <span id="fxOthers"></span>
+      </div>
     </div>
     <div class="card kpi">
       <div class="label">目標比率合計</div>
@@ -300,16 +303,16 @@
 
     <div class="addrow">
       <strong style="font-size:14px">新增標的：</strong>
-      <input name="ticker" id="addTicker" placeholder="代號，如 VT、0050.TW">
+      <input name="ticker" id="addTicker" placeholder="代號，如 VT、0050.TW、VWRA.L">
       <input name="shares" id="addShares" type="number" step="any" placeholder="持有股數">
       <input name="target" id="addTarget" type="number" step="any" placeholder="目標 %">
       <button id="addBtn">＋ 新增</button>
-      <span class="hint">台股請加後綴：上市 .TW（如 0050.TW）、上櫃 .TWO；美股直接輸入代號（如 VT、VTI）。</span>
+      <span class="hint">台股加 .TW（上市）/ .TWO（上櫃）；美股直接輸入代號（VT、VTI）；倫敦證交所加 .L（VWRA.L、HSBA.L，英鎊便士 GBp 報價會自動換算）。</span>
     </div>
   </div>
 
   <footer>
-    資料來源：Yahoo Finance（報價，經公開 CORS 代理轉送，可能延遲 15–20 分鐘）、open.er-api.com（匯率）。
+    資料來源：Yahoo Finance（報價，經公開 CORS 代理轉送，可能延遲 15–20 分鐘）、open.er-api.com（匯率，支援 USD/TWD/GBP/EUR/JPY/HKD 等）。
     所有設定（標的、股數、目標比率）僅儲存在你這台裝置的瀏覽器 localStorage，不會上傳任何地方。<br>
     本工具僅供參考，不構成投資建議；下單前請以券商即時報價為準。
   </footer>
@@ -327,6 +330,9 @@ const DEFAULT_STATE = {
   base: "TWD",
   cash: 0,
   fx: { rate: 32.5, auto: true, updated: null },
+  /* 各幣別對 USD 匯率（1 USD 可換多少該幣），每次更新報價時自動抓取；
+     這裡只是離線時的後備值。GBp/GBX（英鎊便士）會自動除以 100 換成 GBP。 */
+  rates: { TWD: 32.5, GBP: 0.79, EUR: 0.92, JPY: 155, HKD: 7.8 },
   autoRefresh: false,
   assets: [
     { ticker: "VT",       shares: 50,   target: 40 },
@@ -343,7 +349,11 @@ function loadState() {
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) return structuredClone(DEFAULT_STATE);
     const s = JSON.parse(raw);
-    return { ...structuredClone(DEFAULT_STATE), ...s, fx: { ...DEFAULT_STATE.fx, ...(s.fx || {}) } };
+    return {
+      ...structuredClone(DEFAULT_STATE), ...s,
+      fx: { ...DEFAULT_STATE.fx, ...(s.fx || {}) },
+      rates: { ...DEFAULT_STATE.rates, ...(s.rates || {}) },
+    };
   } catch (e) { return structuredClone(DEFAULT_STATE); }
 }
 function saveState() { localStorage.setItem(LS_KEY, JSON.stringify(state)); }
@@ -387,15 +397,16 @@ async function fetchQuote(ticker) {
   };
 }
 
-async function fetchFx() {
+/* 取得整張匯率表（1 USD 對各幣別）；失敗時退回 Yahoo 只補 TWD */
+async function fetchRates() {
   try {
     const r = await fetch("https://open.er-api.com/v6/latest/USD", { signal: AbortSignal.timeout(10000) });
     const j = await r.json();
-    if (j && j.rates && j.rates.TWD) return j.rates.TWD;
-    throw new Error("no TWD");
+    if (j && j.rates && j.rates.TWD) return j.rates;
+    throw new Error("no rates");
   } catch (e) {
-    const q = await fetchQuote("TWD=X");   // 備援：Yahoo 匯率
-    return q.price;
+    const q = await fetchQuote("TWD=X");
+    return { ...state.rates, TWD: q.price };
   }
 }
 
@@ -416,11 +427,11 @@ async function refreshAll() {
       a.currency = q.currency; a.name = q.name; a.error = null;
     } catch (e) { a.error = "報價失敗"; }
   });
-  if (state.fx.auto) {
-    jobs.push(fetchFx().then(r => {
-      state.fx.rate = r; state.fx.updated = Date.now();
-    }).catch(() => {}));
-  }
+  /* 匯率表每次都抓（跨幣別換算要用）；USD/TWD 僅在自動模式下覆寫 */
+  jobs.push(fetchRates().then(rates => {
+    state.rates = { ...state.rates, ...rates };
+    if (state.fx.auto && rates.TWD) { state.fx.rate = rates.TWD; state.fx.updated = Date.now(); }
+  }).catch(() => {}));
   await Promise.all(jobs);
 
   const failed = state.assets.filter(a => a.error).map(a => a.ticker);
@@ -437,12 +448,19 @@ async function refreshAll() {
 function setStatus(msg) { document.getElementById("status").textContent = msg; }
 
 /* ---------- 計算 ---------- */
-function toBase(value, cur) {
+/* 任意幣別 → USD。GBp/GBX（英鎊便士）先除以 100 視為 GBP。查無匯率回傳 null。 */
+function toUSD(value, cur) {
   if (value == null) return null;
-  if (cur === state.base) return value;
-  if (state.base === "TWD" && cur === "USD") return value * state.fx.rate;
-  if (state.base === "USD" && cur === "TWD") return value / state.fx.rate;
-  return value; // 其他幣別不轉換
+  if (cur === "USD") return value;
+  if (cur === "GBp" || cur === "GBX") { cur = "GBP"; value = value / 100; }
+  if (cur === "TWD") return value / state.fx.rate;   // 尊重手動覆寫的 USD/TWD
+  const r = state.rates && state.rates[cur];
+  return (r && r > 0) ? value / r : null;
+}
+function toBase(value, cur) {
+  const usd = toUSD(value, cur);
+  if (usd == null) return null;
+  return state.base === "USD" ? usd : usd * state.fx.rate;
 }
 
 function compute() {
@@ -511,6 +529,14 @@ function render() {
   fxBadge.textContent = state.fx.auto ? "自動" : "手動";
   fxBadge.className = "badge " + (state.fx.auto ? "ok" : "warn");
   document.getElementById("fxAutoBtn").style.visibility = state.fx.auto ? "hidden" : "visible";
+
+  // 有用到的其他幣別匯率顯示在匯率卡片下方
+  const used = [...new Set(state.assets.map(a => {
+    let c = a.currency;
+    return (c === "GBp" || c === "GBX") ? "GBP" : c;
+  }).filter(c => c && c !== "USD" && c !== "TWD"))];
+  document.getElementById("fxOthers").textContent =
+    used.map(c => state.rates[c] ? "USD/" + c + " " + state.rates[c].toFixed(3) : "").filter(Boolean).join("　");
 
   const sumEl = document.getElementById("targetSum");
   sumEl.textContent = fmt.pct(targetSum);
@@ -584,24 +610,28 @@ function renderTable(rows, total, targetSum) {
 
     // 再平衡建議
     let actHtml = '<span class="action none">—</span>';
-    if (a.price != null && Math.abs(r.deltaShares) >= 1) {
+    if (a.price != null && r.priceBase != null && Math.abs(r.deltaShares) >= 1) {
       const n = Math.abs(r.deltaShares);
       const amt = fmt.money(Math.abs(r.deltaShares * r.priceBase), state.base);
       actHtml = r.deltaShares > 0
         ? '<span class="action buy">▲ 買入 ' + n.toLocaleString() + ' 股 <span class="amt">≈ ' + amt + "</span></span>"
         : '<span class="action sell">▼ 賣出 ' + n.toLocaleString() + ' 股 <span class="amt">≈ ' + amt + "</span></span>";
-    } else if (a.price != null) {
+    } else if (a.price != null && r.priceBase != null) {
       actHtml = '<span class="action none">維持（差額 ' + fmt.money(r.deltaValue, state.base) + '）</span>';
     }
+
+    // 查無匯率的提示（例如新幣別但匯率表還沒更新）
+    const fxErr = (a.price != null && r.priceBase == null)
+      ? '<span class="rowerr">查無 ' + esc(a.currency || "?") + ' 匯率，請按「更新報價」</span>' : "";
 
     tr.innerHTML =
       '<td class="left"><span class="ticker" style="border-left:3px solid ' + colorOf(i) + ';padding-left:7px">' + esc(a.ticker) + "</span>" +
         (a.name ? '<span class="name">' + esc(a.name) + "</span>" : "") +
-        (a.error ? '<span class="rowerr">' + esc(a.error) + "</span>" : "") + "</td>" +
+        (a.error ? '<span class="rowerr">' + esc(a.error) + "</span>" : "") + fxErr + "</td>" +
       '<td><span class="cur">' + esc(a.currency || "?") + "</span></td>" +
-      '<td class="num">' + fmt.price(a.price) + chg + "</td>" +
+      '<td class="num">' + fmt.price(a.price, a.currency) + chg + "</td>" +
       '<td><input class="cell num" type="number" step="any" data-i="' + i + '" data-f="shares" value="' + (a.shares ?? 0) + '"></td>' +
-      '<td class="num">' + fmt.money(r.value, state.base) + "</td>" +
+      '<td class="num">' + fmt.money(r.priceBase != null ? r.value : null, state.base) + "</td>" +
       '<td class="num">' + fmt.pct(r.curPct) + "</td>" +
       '<td><input class="cell pct num" type="number" step="any" data-i="' + i + '" data-f="target" value="' + (a.target ?? 0) + '"></td>' +
       "<td>" + devHtml + "</td>" +
@@ -670,7 +700,7 @@ document.getElementById("addBtn").addEventListener("click", async () => {
     setStatus("");
   } catch (e) {
     asset.error = "查無此代號或報價失敗";
-    setStatus(tk + "：查無報價，請確認代號（台股需加 .TW / .TWO）");
+    setStatus(tk + "：查無報價，請確認代號（台股 .TW / .TWO，倫敦 .L）");
   }
   saveState(); render();
 });
@@ -691,7 +721,12 @@ document.getElementById("fxInput").addEventListener("change", e => {
 });
 document.getElementById("fxAutoBtn").addEventListener("click", async () => {
   state.fx.auto = true; saveState(); render();
-  try { state.fx.rate = await fetchFx(); state.fx.updated = Date.now(); saveState(); render(); } catch (e) {}
+  try {
+    const rates = await fetchRates();
+    state.rates = { ...state.rates, ...rates };
+    if (rates.TWD) { state.fx.rate = rates.TWD; state.fx.updated = Date.now(); }
+    saveState(); render();
+  } catch (e) {}
 });
 
 /* 自動更新 */
