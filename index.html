@@ -144,6 +144,15 @@
   .legend .item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
   .legend .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
 
+  /* 歷史走勢圖 */
+  #histChart { margin-top: 6px; }
+  #histChart svg { display: block; width: 100%; height: auto; }
+  .histline { stroke: var(--c1); stroke-width: 2; fill: none; }
+  .histdot  { fill: var(--c1); }
+  .histgrid { stroke: var(--grid); stroke-width: 1; }
+  .histaxis { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .crosshair { stroke: var(--baseline); stroke-dasharray: 3 3; }
+
   /* 共用 tooltip */
   #tip {
     position: fixed; z-index: 10; pointer-events: none; display: none;
@@ -190,10 +199,13 @@
   .sum-bad { color: var(--status-crit); }
 
   .addrow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--grid); }
-  .addrow input[name="ticker"] { width: 130px; text-transform: uppercase; }
+  .addrow input[name="ticker"] { width: 150px; text-transform: uppercase; }
   .addrow input[name="shares"] { width: 100px; }
   .addrow input[name="target"] { width: 80px; }
   .hint { font-size: 12px; color: var(--text-muted); }
+
+  .gsurl   { width: min(460px, 100%); font-size: 12.5px; }
+  .gstoken { width: 220px; font-size: 12.5px; }
 
   .rowerr { color: var(--status-crit); font-size: 11px; display: block; }
   footer { color: var(--text-muted); font-size: 12px; margin-top: 20px; line-height: 1.7; }
@@ -311,9 +323,33 @@
     </div>
   </div>
 
+  <div class="panel">
+    <h2>資產歷史走勢 <span class="hint">（存在你的 Google 試算表，每日 08:00 自動記錄）</span></h2>
+    <div class="settings" style="margin-bottom:6px">
+      <button id="snapBtn">📸 記錄今日快照</button>
+      <span class="hint" id="histInfo"></span>
+    </div>
+    <div id="histChart"></div>
+  </div>
+
+  <div class="panel">
+    <h2>雲端連線（Google Apps Script 報價中繼＋歷史資料庫）</h2>
+    <div class="settings" style="gap:10px">
+      <input class="gsurl" id="gsUrl" placeholder="https://script.google.com/macros/s/…/exec">
+      <input class="gstoken" id="gsToken" placeholder="token（與 Code.gs 的 SECRET 相同）">
+      <button id="gsTestBtn">測試連線</button>
+      <span class="hint" id="gsStatus"></span>
+    </div>
+    <div class="hint" style="margin-top:8px">
+      設定後：報價改走你自己的 Google 中繼站（穩定，不再依賴公開代理），持股設定會同步到試算表，
+      並支援每日資產快照與歷史走勢圖。未設定時仍可使用，但報價走公開 CORS 代理（時常故障）。
+      此設定只存在這台裝置的瀏覽器。
+    </div>
+  </div>
+
   <footer>
-    資料來源：Yahoo Finance（報價，經公開 CORS 代理轉送，可能延遲 15–20 分鐘）、open.er-api.com（匯率，支援 USD/TWD/GBP/EUR/JPY/HKD 等）。
-    所有設定（標的、股數、目標比率）僅儲存在你這台裝置的瀏覽器 localStorage，不會上傳任何地方。<br>
+    資料來源：Yahoo Finance（報價，約延遲 15–20 分鐘）、open.er-api.com（匯率）。
+    持股、目標比率與雲端連線設定僅存在你這台裝置的瀏覽器 localStorage；設定雲端連線後，持股與每日快照會寫入你自己的 Google 試算表。<br>
     本工具僅供參考，不構成投資建議；下單前請以券商即時報價為準。
   </footer>
 </div>
@@ -333,6 +369,7 @@ const DEFAULT_STATE = {
   /* 各幣別對 USD 匯率（1 USD 可換多少該幣），每次更新報價時自動抓取；
      這裡只是離線時的後備值。GBp/GBX（英鎊便士）會自動除以 100 換成 GBP。 */
   rates: { TWD: 32.5, GBP: 0.79, EUR: 0.92, JPY: 155, HKD: 7.8 },
+  gs: { url: "", token: "" },   // Google Apps Script 中繼站
   autoRefresh: false,
   assets: [
     { ticker: "VT",       shares: 50,   target: 40 },
@@ -353,12 +390,43 @@ function loadState() {
       ...structuredClone(DEFAULT_STATE), ...s,
       fx: { ...DEFAULT_STATE.fx, ...(s.fx || {}) },
       rates: { ...DEFAULT_STATE.rates, ...(s.rates || {}) },
+      gs: { ...DEFAULT_STATE.gs, ...(s.gs || {}) },
     };
   } catch (e) { return structuredClone(DEFAULT_STATE); }
 }
 function saveState() { localStorage.setItem(LS_KEY, JSON.stringify(state)); }
 
-/* ---------- 取得外部資料（CORS 代理輪替） ---------- */
+/* ---------- Google Apps Script 中繼站 ---------- */
+function gsConfigured() { return !!(state.gs.url && state.gs.token); }
+
+async function gsCall(action, params = {}) {
+  /* 一律 POST + text/plain body：避免 CORS preflight，token 也不進網址 */
+  const body = JSON.stringify({ action, token: state.gs.token, ...params });
+  const r = await fetch(state.gs.url, { method: "POST", body, signal: AbortSignal.timeout(25000) });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.error || "雲端回應錯誤");
+  return j;
+}
+
+function currentConfig() {
+  return {
+    base: state.base,
+    assets: state.assets.map(a => ({ ticker: a.ticker, shares: a.shares || 0, target: a.target || 0 })),
+  };
+}
+
+/* 持股設定變動後 2 秒，自動同步到試算表（每日自動快照要用） */
+let syncTimer = null;
+function scheduleSync() {
+  if (!gsConfigured()) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => {
+    gsCall("saveconfig", { config: currentConfig() }).catch(() => {});
+  }, 2000);
+}
+
+/* ---------- 公開 CORS 代理（未設定雲端時的備援） ---------- */
 const PROXIES = [
   u => "https://corsproxy.io/?url=" + encodeURIComponent(u),
   u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
@@ -420,22 +488,21 @@ async function refreshAll() {
   btn.disabled = true;
   setStatus("更新中…");
 
-  const jobs = state.assets.map(async a => {
+  let note = "";
+  if (gsConfigured()) {
     try {
-      const q = await fetchQuote(a.ticker);
-      a.price = q.price; a.prevClose = q.prevClose;
-      a.currency = q.currency; a.name = q.name; a.error = null;
-    } catch (e) { a.error = "報價失敗"; }
-  });
-  /* 匯率表每次都抓（跨幣別換算要用）；USD/TWD 僅在自動模式下覆寫 */
-  jobs.push(fetchRates().then(rates => {
-    state.rates = { ...state.rates, ...rates };
-    if (state.fx.auto && rates.TWD) { state.fx.rate = rates.TWD; state.fx.updated = Date.now(); }
-  }).catch(() => {}));
-  await Promise.all(jobs);
+      await refreshViaGs();
+    } catch (e) {
+      note = "雲端中繼失敗（" + e.message + "），改用公開代理備援。";
+      await refreshViaProxies();
+    }
+  } else {
+    await refreshViaProxies();
+  }
 
   const failed = state.assets.filter(a => a.error).map(a => a.ticker);
-  setStatus(failed.length ? "部分報價更新失敗：" + failed.join("、") + "（顯示上次成功的價格）" : "");
+  setStatus((note ? note + " " : "") +
+    (failed.length ? "部分報價更新失敗：" + failed.join("、") + "（顯示上次成功的價格）" : ""));
   document.getElementById("lastUpdate").textContent =
     "最後更新 " + new Date().toLocaleTimeString("zh-TW", { hour12: false });
 
@@ -443,6 +510,41 @@ async function refreshAll() {
   render();
   btn.disabled = false;
   refreshing = false;
+}
+
+/* 走自己的 Apps Script：一次拿全部報價＋匯率表 */
+async function refreshViaGs() {
+  const j = await gsCall("quotes", { symbols: state.assets.map(a => a.ticker).join(",") });
+  state.assets.forEach(a => {
+    const q = j.quotes && j.quotes[a.ticker];
+    if (q && q.price != null) {
+      a.price = q.price; a.prevClose = q.prevClose;
+      a.currency = q.currency; a.name = q.name; a.error = null;
+    } else {
+      a.error = "報價失敗";
+    }
+  });
+  if (j.rates) {
+    state.rates = { ...state.rates, ...j.rates };
+    if (state.fx.auto && j.rates.TWD) { state.fx.rate = j.rates.TWD; state.fx.updated = Date.now(); }
+  }
+  scheduleSync();   // 順便把最新持股設定同步到試算表
+}
+
+/* 走公開代理（逐檔） */
+async function refreshViaProxies() {
+  const jobs = state.assets.map(async a => {
+    try {
+      const q = await fetchQuote(a.ticker);
+      a.price = q.price; a.prevClose = q.prevClose;
+      a.currency = q.currency; a.name = q.name; a.error = null;
+    } catch (e) { a.error = "報價失敗"; }
+  });
+  jobs.push(fetchRates().then(rates => {
+    state.rates = { ...state.rates, ...rates };
+    if (state.fx.auto && rates.TWD) { state.fx.rate = rates.TWD; state.fx.updated = Date.now(); }
+  }).catch(() => {}));
+  await Promise.all(jobs);
 }
 
 function setStatus(msg) { document.getElementById("status").textContent = msg; }
@@ -550,6 +652,7 @@ function render() {
 
   renderStacks(rows, targetSum);
   renderTable(rows, total, targetSum);
+  renderHistory();
 }
 
 function renderStacks(rows, targetSum) {
@@ -647,6 +750,77 @@ function renderTable(rows, total, targetSum) {
   ftp.classList.toggle("sum-bad", Math.abs(targetSum - 100) >= 0.01);
 }
 
+/* ---------- 歷史走勢 ---------- */
+let histData = [];
+
+async function loadHistory() {
+  if (!gsConfigured()) { renderHistory(); return; }
+  try {
+    const j = await gsCall("history", { limit: 730 });
+    histData = j.history || [];
+  } catch (e) {
+    document.getElementById("histInfo").textContent = "歷史資料載入失敗：" + e.message;
+    return;
+  }
+  renderHistory();
+}
+
+function renderHistory() {
+  const el = document.getElementById("histChart");
+  const info = document.getElementById("histInfo");
+  if (!gsConfigured()) {
+    info.textContent = "尚未設定雲端連線（見下方「雲端連線」區塊），快照與歷史走勢需先完成設定。";
+    el.innerHTML = ""; return;
+  }
+  if (histData.length === 0) {
+    info.textContent = "還沒有歷史資料，按「記錄今日快照」開始累積。";
+    el.innerHTML = ""; return;
+  }
+  info.textContent = "共 " + histData.length + " 筆";
+  if (histData.length < 2) {
+    el.innerHTML = '<div class="hint">已有 1 筆（' + esc(histData[0].date) + '），累積兩天以上會畫出走勢圖。</div>';
+    return;
+  }
+
+  const useUSD = state.base === "USD";
+  const pts = histData.map(h => ({ date: h.date, v: useUSD ? h.totalUSD : h.totalTWD }));
+  const W = 800, H = 220, L = 64, R = 14, T = 14, B = 26;
+  const vmin0 = Math.min(...pts.map(p => p.v)), vmax0 = Math.max(...pts.map(p => p.v));
+  const pad = (vmax0 - vmin0) * 0.1 || vmax0 * 0.05 || 1;
+  const vmin = vmin0 - pad, vmax = vmax0 + pad;
+  const x = i => L + (W - L - R) * (i / (pts.length - 1));
+  const y = v => T + (H - T - B) * (1 - (v - vmin) / (vmax - vmin));
+  const compact = v => new Intl.NumberFormat("zh-TW", { notation: "compact", maximumFractionDigits: 1 }).format(v);
+
+  let g = "";
+  for (let k = 0; k <= 3; k++) {
+    const vv = vmin + (vmax - vmin) * k / 3, yy = y(vv);
+    g += '<line class="histgrid" x1="' + L + '" y1="' + yy.toFixed(1) + '" x2="' + (W - R) + '" y2="' + yy.toFixed(1) + '"/>' +
+         '<text class="histaxis" x="' + (L - 8) + '" y="' + (yy + 4).toFixed(1) + '" text-anchor="end">' + compact(vv) + "</text>";
+  }
+  const path = pts.map((p, i) => (i ? "L" : "M") + x(i).toFixed(1) + " " + y(p.v).toFixed(1)).join(" ");
+  const lastI = pts.length - 1;
+  g += '<path class="histline" d="' + path + '"/>';
+  g += '<circle class="histdot" r="4" cx="' + x(lastI).toFixed(1) + '" cy="' + y(pts[lastI].v).toFixed(1) + '"/>';
+  g += '<text class="histaxis" x="' + L + '" y="' + (H - 6) + '">' + esc(pts[0].date) + "</text>";
+  g += '<text class="histaxis" x="' + (W - R) + '" y="' + (H - 6) + '" text-anchor="end">' + esc(pts[lastI].date) + "</text>";
+  g += '<line id="histCross" class="crosshair" y1="' + T + '" y2="' + (H - B) + '" x1="0" x2="0" visibility="hidden"/>';
+  el.innerHTML = '<svg viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="資產歷史走勢">' + g + "</svg>";
+
+  const svg = el.querySelector("svg"), cross = el.querySelector("#histCross");
+  svg.addEventListener("mousemove", e => {
+    const rect = svg.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) / rect.width * W;
+    let best = 0, bd = Infinity;
+    pts.forEach((p, i) => { const d = Math.abs(x(i) - mx); if (d < bd) { bd = d; best = i; } });
+    cross.setAttribute("x1", x(best).toFixed(1)); cross.setAttribute("x2", x(best).toFixed(1));
+    cross.setAttribute("visibility", "visible");
+    showTip(e, "<div class='t-title'>" + esc(pts[best].date) + "</div><div class='t-sub'>" +
+      fmt.money(pts[best].v, state.base) + "</div>");
+  });
+  svg.addEventListener("mouseleave", () => { cross.setAttribute("visibility", "hidden"); hideTip(); });
+}
+
 /* ---------- Tooltip ---------- */
 const tip = document.getElementById("tip");
 function showTip(e, html) {
@@ -666,7 +840,7 @@ document.getElementById("tbody").addEventListener("change", e => {
   if (t.dataset.f) {
     const a = state.assets[Number(t.dataset.i)];
     a[t.dataset.f] = Number(t.value) || 0;
-    saveState(); render();
+    saveState(); scheduleSync(); render();
   }
 });
 document.getElementById("tbody").addEventListener("click", e => {
@@ -675,7 +849,7 @@ document.getElementById("tbody").addEventListener("click", e => {
   const i = Number(b.dataset.del);
   if (confirm("確定刪除 " + state.assets[i].ticker + "？")) {
     state.assets.splice(i, 1);
-    saveState(); render();
+    saveState(); scheduleSync(); render();
   }
 });
 
@@ -692,10 +866,17 @@ document.getElementById("addBtn").addEventListener("click", async () => {
   document.getElementById("addTicker").value = "";
   document.getElementById("addShares").value = "";
   document.getElementById("addTarget").value = "";
-  saveState(); render();
+  saveState(); scheduleSync(); render();
   setStatus("查詢 " + tk + " 報價中…");
   try {
-    const q = await fetchQuote(tk);
+    let q;
+    if (gsConfigured()) {
+      const j = await gsCall("quotes", { symbols: tk });
+      q = j.quotes && j.quotes[tk];
+      if (!q || q.price == null) throw new Error("查無報價");
+    } else {
+      q = await fetchQuote(tk);
+    }
     Object.assign(asset, { price: q.price, prevClose: q.prevClose, currency: q.currency, name: q.name, error: null });
     setStatus("");
   } catch (e) {
@@ -709,7 +890,7 @@ document.getElementById("addTicker").addEventListener("keydown", e => {
 });
 
 document.getElementById("baseCur").addEventListener("change", e => {
-  state.base = e.target.value; saveState(); render();
+  state.base = e.target.value; saveState(); scheduleSync(); render();
 });
 document.getElementById("extraCash").addEventListener("change", e => {
   state.cash = Number(e.target.value) || 0; saveState(); render();
@@ -727,6 +908,50 @@ document.getElementById("fxAutoBtn").addEventListener("click", async () => {
     if (rates.TWD) { state.fx.rate = rates.TWD; state.fx.updated = Date.now(); }
     saveState(); render();
   } catch (e) {}
+});
+
+/* 快照 */
+document.getElementById("snapBtn").addEventListener("click", async () => {
+  if (!gsConfigured()) { setStatus("請先在下方「雲端連線」區塊完成設定"); return; }
+  const b = document.getElementById("snapBtn");
+  b.disabled = true;
+  setStatus("記錄快照中…");
+  try {
+    clearTimeout(syncTimer);
+    await gsCall("saveconfig", { config: currentConfig() });   // 先把最新持股同步上去
+    const j = await gsCall("snapshot");
+    const warn = (j.missing && j.missing.length) ? "（注意：" + j.missing.join("、") + " 無報價，未計入）" : "";
+    setStatus("已記錄 " + j.snapshot.date + " 快照：" +
+      fmt.money(state.base === "USD" ? j.snapshot.totalUSD : j.snapshot.totalTWD, state.base) + " " + warn);
+    await loadHistory();
+  } catch (e) {
+    setStatus("快照失敗：" + e.message);
+  }
+  b.disabled = false;
+});
+
+/* 雲端連線設定 */
+document.getElementById("gsUrl").addEventListener("change", e => {
+  state.gs.url = e.target.value.trim(); saveState(); renderHistory();
+});
+document.getElementById("gsToken").addEventListener("change", e => {
+  state.gs.token = e.target.value.trim(); saveState(); renderHistory();
+});
+document.getElementById("gsTestBtn").addEventListener("click", async () => {
+  const st = document.getElementById("gsStatus");
+  if (!gsConfigured()) { st.textContent = "請先填入網址與 token"; return; }
+  if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(state.gs.url)) {
+    st.textContent = "⚠ 網址格式不對，應為 script.google.com 開頭、/exec 結尾"; return;
+  }
+  st.textContent = "測試中…";
+  try {
+    await gsCall("history", { limit: 1 });
+    st.textContent = "✓ 連線成功";
+    scheduleSync();
+    loadHistory();
+  } catch (e) {
+    st.textContent = "✗ 失敗：" + e.message;
+  }
 });
 
 /* 自動更新 */
@@ -753,9 +978,12 @@ if (savedTheme) document.documentElement.dataset.theme = savedTheme;
 document.getElementById("baseCur").value = state.base;
 document.getElementById("extraCash").value = state.cash;
 document.getElementById("autoRefresh").checked = !!state.autoRefresh;
+document.getElementById("gsUrl").value = state.gs.url;
+document.getElementById("gsToken").value = state.gs.token;
 if (state.autoRefresh) setAutoRefresh(true);
 render();
 refreshAll();
+loadHistory();
 </script>
 </body>
 </html>
