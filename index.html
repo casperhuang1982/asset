@@ -212,6 +212,26 @@
   #status { font-size: 13px; color: var(--text-secondary); min-height: 1.4em; margin-top: 8px; }
   .del { color: var(--text-muted); border: none; background: none; font-size: 15px; padding: 2px 6px; }
   .del:hover { color: var(--status-crit); }
+
+  /* 區塊標題列（匯出／匯入） */
+  .panelhead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px; }
+  .panelhead h2 { margin-bottom: 0; }
+  .panelhead .io { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .hint.err { color: var(--status-crit); }
+
+  /* 排序控制 */
+  th.sortcell, td.sortcell { padding-left: 2px; padding-right: 2px; text-align: left; }
+  .sortctl { display: inline-flex; align-items: center; }
+  .drag, .mv {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 28px; padding: 0; font-size: 12px;
+    color: var(--text-muted); background: none; border: none; border-radius: 4px;
+  }
+  .drag { font-size: 15px; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+  .drag:hover, .mv:hover:not(:disabled) { color: var(--text-primary); background: var(--div-mid); }
+  .mv:disabled { opacity: .25; }
+  tbody tr.dragging { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  tbody tr.dragging .drag { cursor: grabbing; color: var(--text-primary); }
 </style>
 </head>
 <body>
@@ -282,11 +302,20 @@
   </div>
 
   <div class="panel">
-    <h2>持有部位與再平衡建議</h2>
+    <div class="panelhead">
+      <h2>持有部位與再平衡建議</h2>
+      <div class="io">
+        <span class="hint" id="ioStatus" role="status"></span>
+        <button class="small" id="exportBtn" title="下載 JSON 備份檔（不含雲端連線網址與 token）">⬇ 匯出設定</button>
+        <button class="small" id="importBtn" title="從匯出的 JSON 檔還原，會取代目前的持股清單">⬆ 匯入設定</button>
+        <input type="file" id="importFile" accept=".json,application/json" hidden>
+      </div>
+    </div>
     <div class="tablewrap">
       <table>
         <thead>
           <tr>
+            <th class="sortcell">排序</th>
             <th class="left">代號</th>
             <th>幣別</th>
             <th>現價</th>
@@ -302,6 +331,7 @@
         <tbody id="tbody"></tbody>
         <tfoot>
           <tr>
+            <td></td>
             <td class="left">合計</td>
             <td></td><td></td><td></td>
             <td class="num" id="footTotal">–</td>
@@ -349,7 +379,7 @@
 
   <footer>
     資料來源：Yahoo Finance（報價，約延遲 15–20 分鐘）、open.er-api.com（匯率）。
-    持股、目標比率與雲端連線設定僅存在你這台裝置的瀏覽器 localStorage；設定雲端連線後，持股與每日快照會寫入你自己的 Google 試算表。<br>
+    持股、目標比率與雲端連線設定僅存在你這台裝置的瀏覽器 localStorage（可用「匯出設定」備份或搬到其他裝置，匯出檔不含雲端連線設定）；設定雲端連線後，持股與每日快照會寫入你自己的 Google 試算表。<br>
     本工具僅供參考，不構成投資建議；下單前請以券商即時報價為準。
   </footer>
 </div>
@@ -480,6 +510,7 @@ async function fetchRates() {
 
 /* ---------- 更新報價 ---------- */
 let refreshing = false;
+let refreshQueued = false;
 
 async function refreshAll() {
   if (refreshing) return;
@@ -510,6 +541,7 @@ async function refreshAll() {
   render();
   btn.disabled = false;
   refreshing = false;
+  if (refreshQueued) { refreshQueued = false; refreshAll(); }
 }
 
 /* 走自己的 Apps Script：一次拿全部報價＋匯率表 */
@@ -607,7 +639,19 @@ const fmt = {
 };
 
 const COLORS = ["var(--c1)","var(--c2)","var(--c3)","var(--c4)","var(--c5)","var(--c6)","var(--c7)","var(--c8)"];
-const colorOf = i => i < 8 ? COLORS[i] : "var(--c-other)";
+const colorOf = a => a.c < 8 ? COLORS[a.c] : "var(--c-other)";
+
+/* 每檔標的固定一個顏色槽位，調整順序時顏色不會跟著變 */
+function ensureColorSlots() {
+  const used = new Set(state.assets.map(a => a.c));
+  let next = 0;
+  state.assets.forEach(a => {
+    if (a.c != null) return;
+    while (used.has(next)) next++;
+    a.c = next;
+    used.add(next);
+  });
+}
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, c =>
@@ -616,6 +660,8 @@ function esc(s) {
 
 /* ---------- 畫面 ---------- */
 function render() {
+  if (drag) return;   // 拖曳中不重繪，放開時會統一重繪
+  ensureColorSlots();
   const { rows, total, plan, targetSum } = compute();
   const base = state.base;
 
@@ -664,12 +710,12 @@ function renderStacks(rows, targetSum) {
   rows.forEach((r, i) => {
     const t = Number(r.a.target) || 0;
     const tw = targetSum > 0 ? t / targetSum * 100 : 0;
-    tEl.appendChild(makeSeg(r.a.ticker, tw, colorOf(i), fmt.pct(t) + "（目標）"));
-    cEl.appendChild(makeSeg(r.a.ticker, r.curPct, colorOf(i), fmt.pct(r.curPct) + "（目前）"));
+    tEl.appendChild(makeSeg(r.a.ticker, tw, colorOf(r.a), fmt.pct(t) + "（目標）"));
+    cEl.appendChild(makeSeg(r.a.ticker, r.curPct, colorOf(r.a), fmt.pct(r.curPct) + "（目前）"));
 
     const item = document.createElement("span");
     item.className = "item";
-    item.innerHTML = '<span class="swatch" style="background:' + colorOf(i) + '"></span>' +
+    item.innerHTML = '<span class="swatch" style="background:' + colorOf(r.a) + '"></span>' +
       esc(r.a.ticker) + (r.a.name ? " · " + esc(r.a.name) : "");
     lg.appendChild(item);
   });
@@ -728,7 +774,12 @@ function renderTable(rows, total, targetSum) {
       ? '<span class="rowerr">查無 ' + esc(a.currency || "?") + ' 匯率，請按「更新報價」</span>' : "";
 
     tr.innerHTML =
-      '<td class="left"><span class="ticker" style="border-left:3px solid ' + colorOf(i) + ';padding-left:7px">' + esc(a.ticker) + "</span>" +
+      '<td class="sortcell"><span class="sortctl">' +
+        '<span class="drag" data-i="' + i + '" title="拖曳調整順序" aria-hidden="true">⠿</span>' +
+        '<button class="mv" data-move="-1" data-i="' + i + '" title="上移" aria-label="將 ' + esc(a.ticker) + ' 上移"' + (i === 0 ? " disabled" : "") + ">▲</button>" +
+        '<button class="mv" data-move="1" data-i="' + i + '" title="下移" aria-label="將 ' + esc(a.ticker) + ' 下移"' + (i === rows.length - 1 ? " disabled" : "") + ">▼</button>" +
+      "</span></td>" +
+      '<td class="left"><span class="ticker" style="border-left:3px solid ' + colorOf(a) + ';padding-left:7px">' + esc(a.ticker) + "</span>" +
         (a.name ? '<span class="name">' + esc(a.name) + "</span>" : "") +
         (a.error ? '<span class="rowerr">' + esc(a.error) + "</span>" : "") + fxErr + "</td>" +
       '<td><span class="cur">' + esc(a.currency || "?") + "</span></td>" +
@@ -844,12 +895,168 @@ document.getElementById("tbody").addEventListener("change", e => {
   }
 });
 document.getElementById("tbody").addEventListener("click", e => {
+  const mv = e.target.closest("[data-move]");
+  if (mv) {
+    const i = Number(mv.dataset.i), d = Number(mv.dataset.move);
+    commitEdit();
+    moveAsset(i, i + d);
+    // 重繪後把焦點放回同一檔的按鈕，方便用鍵盤連續移動
+    const tb = document.getElementById("tbody");
+    const q = dir => tb.querySelector('[data-move="' + dir + '"][data-i="' + (i + d) + '"]:not(:disabled)');
+    (q(d) || q(-d))?.focus();
+    return;
+  }
   const b = e.target.closest("[data-del]");
   if (!b) return;
   const i = Number(b.dataset.del);
+  commitEdit();
   if (confirm("確定刪除 " + state.assets[i].ticker + "？")) {
     state.assets.splice(i, 1);
     saveState(); scheduleSync(); render();
+  }
+});
+
+/* 表格會在 change 時重繪：先擋掉按鈕造成的 blur，等 click 時再主動送出編輯中的輸入，
+   否則輸入後第一下點擊會落在被換掉的舊按鈕上而失效 */
+function commitEdit() {
+  const el = document.activeElement;
+  if (el && el.matches("#tbody input")) el.blur();
+}
+document.getElementById("tbody").addEventListener("mousedown", e => {
+  if (e.target.closest(".drag, [data-move], [data-del]")) e.preventDefault();
+});
+
+function moveAsset(from, to) {
+  if (to < 0 || to >= state.assets.length || to === from) return;
+  state.assets.splice(to, 0, state.assets.splice(from, 1)[0]);
+  saveState(); scheduleSync(); render();
+}
+
+/* 拖曳排序：只搬動相鄰列、不搬動被拖曳列本身，pointer capture 才不會中斷 */
+let drag = null;
+
+document.getElementById("tbody").addEventListener("pointerdown", e => {
+  const h = e.target.closest(".drag");
+  if (!h || e.button !== 0) return;
+  const from = Number(h.dataset.i);
+  commitEdit();   // 可能重繪表格，所以下面要重新取列
+  const row = document.getElementById("tbody").rows[from];
+  row.querySelector(".drag").setPointerCapture(e.pointerId);
+  row.classList.add("dragging");
+  drag = { from, row };
+});
+document.getElementById("tbody").addEventListener("pointermove", e => {
+  if (!drag) return;
+  const { row } = drag, tb = row.parentNode;
+  const mid = el => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; };
+  let s;
+  while ((s = row.previousElementSibling) && e.clientY < mid(s)) tb.insertBefore(s, row.nextElementSibling);
+  while ((s = row.nextElementSibling) && e.clientY > mid(s)) tb.insertBefore(s, row);
+});
+function endDrag(apply) {
+  if (!drag) return;
+  const { from, row } = drag;
+  const to = [...row.parentNode.rows].indexOf(row);
+  drag = null;
+  if (apply && to !== from) moveAsset(from, to);
+  else render();   // 沒有移動或取消：還原成原本的順序
+}
+document.getElementById("tbody").addEventListener("pointerup", () => endDrag(true));
+document.getElementById("tbody").addEventListener("pointercancel", () => endDrag(false));
+document.getElementById("tbody").addEventListener("lostpointercapture", () => endDrag(false));
+
+/* ---------- 匯出／匯入設定 ---------- */
+const EXPORT_APP = "asset-rebalance";
+
+function setIoStatus(msg, isErr) {
+  const el = document.getElementById("ioStatus");
+  el.textContent = msg;
+  el.classList.toggle("err", !!isErr);
+}
+
+/* 刻意不匯出雲端連線的網址與 token：備份檔常被存到雲端或轉傳，不該帶著密鑰 */
+function buildExport() {
+  return {
+    app: EXPORT_APP,
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    base: state.base,
+    cash: Number(state.cash) || 0,
+    autoRefresh: !!state.autoRefresh,
+    fx: { rate: state.fx.rate, auto: !!state.fx.auto },
+    assets: currentConfig().assets,
+  };
+}
+
+/* 檢查並正規化匯入內容，只取認得的欄位；有問題就丟出可直接顯示給使用者的訊息 */
+function parseImport(text) {
+  let d;
+  try { d = JSON.parse(text); } catch (e) { throw new Error("不是有效的 JSON 檔"); }
+  if (!d || d.app !== EXPORT_APP) throw new Error("這不是本工具匯出的設定檔");
+  if (d.version !== 1) throw new Error("不支援的設定檔版本：" + d.version);
+  if (!Array.isArray(d.assets) || d.assets.length === 0) throw new Error("設定檔內沒有持股資料");
+  if (d.base !== "TWD" && d.base !== "USD") throw new Error("基準幣別不正確：" + d.base);
+  if (typeof d.cash !== "number" || !isFinite(d.cash)) throw new Error("額外投入資金不是數字");
+  if (!d.fx || typeof d.fx.rate !== "number" || !(d.fx.rate > 0)) throw new Error("匯率不正確");
+
+  const seen = new Set();
+  const assets = d.assets.map((a, i) => {
+    const label = "第 " + (i + 1) + " 筆持股";
+    const ticker = a && typeof a.ticker === "string" ? a.ticker.trim().toUpperCase() : "";
+    if (!ticker || ticker.length > 20) throw new Error(label + "的代號不正確");
+    if (seen.has(ticker)) throw new Error("代號重複：" + ticker);
+    seen.add(ticker);
+    for (const f of ["shares", "target"]) {
+      if (typeof a[f] !== "number" || !isFinite(a[f]) || a[f] < 0) {
+        throw new Error(ticker + " 的" + (f === "shares" ? "持有股數" : "目標 %") + "不正確");
+      }
+    }
+    return { ticker, shares: a.shares, target: a.target };
+  });
+  return { base: d.base, cash: d.cash, autoRefresh: !!d.autoRefresh, fx: { rate: d.fx.rate, auto: !!d.fx.auto }, assets };
+}
+
+function applyImport(cfg) {
+  // 相同代號保留已抓到的報價與顏色，畫面不必等更新才有數字
+  const old = new Map(state.assets.map(a => [a.ticker, a]));
+  state.assets = cfg.assets.map(a => ({ ...old.get(a.ticker), ...a }));
+  state.base = cfg.base;
+  state.cash = cfg.cash;
+  state.fx = { ...state.fx, ...cfg.fx };
+  setAutoRefresh(cfg.autoRefresh);
+  syncSettingsForm();
+  saveState(); scheduleSync(); render();
+  if (refreshing) refreshQueued = true; else refreshAll();
+}
+
+document.getElementById("exportBtn").addEventListener("click", () => {
+  const blob = new Blob([JSON.stringify(buildExport(), null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "asset-rebalance-settings-" + new Date().toLocaleDateString("sv-SE") + ".json";
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setIoStatus("已匯出 " + state.assets.length + " 檔持股（不含雲端連線設定）");
+});
+document.getElementById("importBtn").addEventListener("click", () => {
+  document.getElementById("importFile").click();
+});
+document.getElementById("importFile").addEventListener("change", async e => {
+  const file = e.target.files[0];
+  e.target.value = "";   // 清空，才能重複選同一個檔案
+  if (!file) return;
+  try {
+    if (file.size > 1024 * 1024) throw new Error("檔案太大，不像是設定檔");
+    const cfg = parseImport(await file.text());
+    const msg = "匯入「" + file.name + "」會取代目前的 " + state.assets.length + " 檔持股，改為 " + cfg.assets.length +
+      " 檔：\n" + cfg.assets.map(a => a.ticker).join("、") +
+      (gsConfigured() ? "\n\n已連線雲端，匯入後也會同步到試算表。" : "") + "\n\n確定匯入？";
+    if (!confirm(msg)) { setIoStatus("已取消匯入"); return; }
+    applyImport(cfg);
+    setIoStatus("已匯入 " + cfg.assets.length + " 檔持股");
+  } catch (err) {
+    setIoStatus("匯入失敗：" + err.message, true);
   }
 });
 
@@ -975,9 +1182,12 @@ const savedTheme = localStorage.getItem(LS_KEY + "-theme");
 if (savedTheme) document.documentElement.dataset.theme = savedTheme;
 
 /* ---------- 啟動 ---------- */
-document.getElementById("baseCur").value = state.base;
-document.getElementById("extraCash").value = state.cash;
-document.getElementById("autoRefresh").checked = !!state.autoRefresh;
+function syncSettingsForm() {
+  document.getElementById("baseCur").value = state.base;
+  document.getElementById("extraCash").value = state.cash;
+  document.getElementById("autoRefresh").checked = !!state.autoRefresh;
+}
+syncSettingsForm();
 document.getElementById("gsUrl").value = state.gs.url;
 document.getElementById("gsToken").value = state.gs.token;
 if (state.autoRefresh) setAutoRefresh(true);
