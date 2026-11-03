@@ -164,7 +164,6 @@
   #tip .t-sub { color: var(--text-secondary); }
 
   /* 資產表格 */
-  .tablewrap { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
   th, td { padding: 8px 10px; text-align: right; white-space: nowrap; }
   th {
@@ -174,25 +173,25 @@
   th.left, td.left { text-align: left; }
   tbody tr { border-bottom: 1px solid var(--grid); }
   tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
-  td .name { display: block; font-size: 11px; color: var(--text-muted); max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+  td .name { display: block; font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ticker { display: inline-block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
   .num { font-variant-numeric: tabular-nums; }
-  td input.cell { width: 84px; padding: 4px 8px; font-variant-numeric: tabular-nums; }
-  td input.cell.pct { width: 64px; }
+  td input.cell { width: 100%; padding: 4px 8px; font-variant-numeric: tabular-nums; }
   .chg { font-size: 11px; display: block; }
   .chg.up { color: var(--up); } .chg.down { color: var(--down); }
   .ticker { font-weight: 700; }
   .cur { font-size: 11px; color: var(--text-muted); }
 
   /* 偏離 diverging 迷你條 */
-  .devcell { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; }
-  .devbar { position: relative; width: 90px; height: 10px; background: var(--div-mid); border-radius: 3px; flex: none; }
+  .devcell { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
+  .devbar { position: relative; flex: 1; min-width: 16px; max-width: 90px; height: 10px; background: var(--div-mid); border-radius: 3px; }
   .devbar::after { content:""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--baseline); }
   .devfill { position: absolute; top: 0; bottom: 0; border-radius: 2px; }
 
-  .action { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; }
+  .action { display: inline-block; font-weight: 600; }
   .action.buy  { color: var(--status-crit); }
   .action.sell { color: var(--status-good); }
-  .action .amt { font-weight: 400; font-size: 11.5px; color: var(--text-secondary); }
+  .action .amt { display: block; font-weight: 400; font-size: 11.5px; color: var(--text-secondary); }
   .action.none { color: var(--text-muted); font-weight: 400; }
 
   tfoot td { padding-top: 10px; font-weight: 600; border-top: 1px solid var(--baseline); }
@@ -221,17 +220,78 @@
 
   /* 排序控制 */
   th.sortcell, td.sortcell { padding-left: 2px; padding-right: 2px; text-align: left; }
-  .sortctl { display: inline-flex; align-items: center; }
-  .drag, .mv {
+  #tbody .sortcell { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+  .drag {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 24px; height: 28px; padding: 0; font-size: 12px;
-    color: var(--text-muted); background: none; border: none; border-radius: 4px;
+    width: 28px; height: 32px; font-size: 15px; color: var(--text-muted); border-radius: 4px;
   }
-  .drag { font-size: 15px; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
-  .drag:hover, .mv:hover:not(:disabled) { color: var(--text-primary); background: var(--div-mid); }
-  .mv:disabled { opacity: .25; }
+  #tbody .sortcell:hover .drag { color: var(--text-primary); background: var(--div-mid); }
   tbody tr.dragging { background: color-mix(in srgb, var(--accent) 14%, transparent); }
-  tbody tr.dragging .drag { cursor: grabbing; color: var(--text-primary); }
+  tbody tr.dragging .sortcell { cursor: grabbing; }
+  tbody tr.dragging .drag { color: var(--text-primary); }
+
+  /* 持股表固定欄寬：表格寬度永遠等於容器，不會出現橫向卷軸；過長內容在格內換行 */
+  .holdings { table-layout: fixed; }
+  .holdings th, .holdings td { white-space: normal; overflow-wrap: anywhere; }
+  .holdings .sortcell { width: 36px; }
+  .holdings th.c-cur { width: 5%; }
+  .holdings th.c-price { width: 11%; }
+  .holdings th.c-shares { width: 10%; }
+  .holdings th.c-value { width: 13%; }
+  .holdings th.c-curpct { width: 7.5%; }
+  .holdings th.c-target { width: 7.5%; }
+  .holdings th.c-dev { width: 11%; }
+  .holdings th.c-action { width: 14%; }
+  .holdings .c-del { width: 34px; padding-left: 0; padding-right: 0; text-align: center; }
+  .devnum { flex: none; min-width: 44px; white-space: nowrap; }
+  #footCurPct, #footTargetPct { white-space: nowrap; overflow-wrap: normal; }
+
+  /* 視窗較窄：收掉重複資訊（現價已帶幣別），表格仍維持單列 */
+  @media (max-width: 1100px) {
+    .c-cur, .opt { display: none; }
+    .holdings th, .holdings td { padding-left: 5px; padding-right: 5px; }
+    .holdings .sortcell { padding-left: 2px; padding-right: 2px; }
+    .holdings .c-del { padding-left: 0; padding-right: 0; }
+    /* 收掉數字調整鈕，把空間留給數字 */
+    td input.cell { padding: 4px 5px; appearance: textfield; -moz-appearance: textfield; }
+    td input.cell::-webkit-inner-spin-button, td input.cell::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  }
+
+  /* 手機：每檔標的改成一張卡片 */
+  @media (max-width: 860px) {
+    body { padding: 16px; }
+    .panel { padding: 12px; }
+    .holdings, .holdings tbody, .holdings tfoot { display: block; }
+    .holdings thead { display: none; }
+    .holdings tbody tr {
+      display: grid; gap: 8px 12px; padding: 10px 0;
+      grid-template-columns: 40px 1fr 1fr 32px;
+      grid-template-areas:
+        "drag tick tick del"
+        "price price shares shares"
+        "value value curpct curpct"
+        "target target dev dev"
+        "act act act act";
+    }
+    .holdings td, .holdings .sortcell, .holdings .c-del { display: block; width: auto; padding: 0; text-align: left; min-width: 0; }
+    .holdings td[data-label]::before {
+      content: attr(data-label); display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 2px;
+    }
+    .holdings .c-cur { display: none; }
+    .sortcell { grid-area: drag; } .c-ticker { grid-area: tick; align-self: center; } .c-del { grid-area: del; }
+    .c-price { grid-area: price; } .c-shares { grid-area: shares; }
+    .c-value { grid-area: value; } .c-curpct { grid-area: curpct; }
+    .c-target { grid-area: target; } .c-dev { grid-area: dev; } .c-action { grid-area: act; }
+    .drag { width: 40px; height: 40px; font-size: 18px; }
+    .chg { display: inline; margin-left: 6px; }
+    .devcell { justify-content: flex-start; }
+    .devbar { max-width: none; }
+    .action .amt { display: inline; margin-left: 6px; }
+    .holdings tfoot tr { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; padding-top: 10px; }
+    .holdings tfoot td { border-top: none; }
+    .holdings tfoot td:empty { display: none; }
+    .foot-label { grid-column: 1 / -1; }
+  }
 </style>
 </head>
 <body>
@@ -312,31 +372,31 @@
       </div>
     </div>
     <div class="tablewrap">
-      <table>
+      <table class="holdings">
         <thead>
           <tr>
             <th class="sortcell">排序</th>
-            <th class="left">代號</th>
-            <th>幣別</th>
-            <th>現價</th>
-            <th>持有股數</th>
-            <th>市值（<span class="baseCurTxt">TWD</span>）</th>
-            <th>目前 %</th>
-            <th>目標 %</th>
-            <th>偏離（目前−目標）</th>
-            <th>再平衡建議</th>
-            <th></th>
+            <th class="left c-ticker">代號</th>
+            <th class="c-cur">幣別</th>
+            <th class="c-price">現價</th>
+            <th class="c-shares">持有股數</th>
+            <th class="c-value">市值（<span class="baseCurTxt">TWD</span>）</th>
+            <th class="c-curpct">目前 %</th>
+            <th class="c-target">目標 %</th>
+            <th class="c-dev" title="目前 − 目標">偏離<span class="opt">（目前−目標）</span></th>
+            <th class="c-action">再平衡建議</th>
+            <th class="c-del"></th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
         <tfoot>
           <tr>
             <td></td>
-            <td class="left">合計</td>
-            <td></td><td></td><td></td>
-            <td class="num" id="footTotal">–</td>
-            <td class="num" id="footCurPct">–</td>
-            <td class="num" id="footTargetPct">–</td>
+            <td class="left foot-label">合計</td>
+            <td class="c-cur"></td><td></td><td></td>
+            <td class="num" id="footTotal" data-label="市值">–</td>
+            <td class="num" id="footCurPct" data-label="目前 %">–</td>
+            <td class="num" id="footTargetPct" data-label="目標 %">–</td>
             <td></td><td></td><td></td>
           </tr>
         </tfoot>
@@ -755,7 +815,7 @@ function renderTable(rows, total, targetSum) {
       (r.dev >= 0
         ? "left:50%;width:" + w + "%;background:var(--div-pos)"
         : "right:50%;width:" + w + "%;background:var(--div-neg)") +
-      '"></span></span><span class="num" style="min-width:52px;display:inline-block">' + fmt.pct(r.dev, true) + "</span></span>";
+      '"></span></span><span class="num devnum">' + fmt.pct(r.dev, true) + "</span></span>";
 
     // 再平衡建議
     let actHtml = '<span class="action none">—</span>';
@@ -766,7 +826,7 @@ function renderTable(rows, total, targetSum) {
         ? '<span class="action buy">▲ 買入 ' + n.toLocaleString() + ' 股 <span class="amt">≈ ' + amt + "</span></span>"
         : '<span class="action sell">▼ 賣出 ' + n.toLocaleString() + ' 股 <span class="amt">≈ ' + amt + "</span></span>";
     } else if (a.price != null && r.priceBase != null) {
-      actHtml = '<span class="action none">維持（差額 ' + fmt.money(r.deltaValue, state.base) + '）</span>';
+      actHtml = '<span class="action none">維持<span class="amt">差額 ' + fmt.money(r.deltaValue, state.base) + "</span></span>";
     }
 
     // 查無匯率的提示（例如新幣別但匯率表還沒更新）
@@ -774,23 +834,19 @@ function renderTable(rows, total, targetSum) {
       ? '<span class="rowerr">查無 ' + esc(a.currency || "?") + ' 匯率，請按「更新報價」</span>' : "";
 
     tr.innerHTML =
-      '<td class="sortcell"><span class="sortctl">' +
-        '<span class="drag" data-i="' + i + '" title="拖曳調整順序" aria-hidden="true">⠿</span>' +
-        '<button class="mv" data-move="-1" data-i="' + i + '" title="上移" aria-label="將 ' + esc(a.ticker) + ' 上移"' + (i === 0 ? " disabled" : "") + ">▲</button>" +
-        '<button class="mv" data-move="1" data-i="' + i + '" title="下移" aria-label="將 ' + esc(a.ticker) + ' 下移"' + (i === rows.length - 1 ? " disabled" : "") + ">▼</button>" +
-      "</span></td>" +
-      '<td class="left"><span class="ticker" style="border-left:3px solid ' + colorOf(a) + ';padding-left:7px">' + esc(a.ticker) + "</span>" +
+      '<td class="sortcell"><span class="drag" data-i="' + i + '" title="拖曳調整順序" aria-hidden="true">⠿</span></td>' +
+      '<td class="left c-ticker"><span class="ticker" style="border-left:3px solid ' + colorOf(a) + ';padding-left:7px">' + esc(a.ticker) + "</span>" +
         (a.name ? '<span class="name">' + esc(a.name) + "</span>" : "") +
         (a.error ? '<span class="rowerr">' + esc(a.error) + "</span>" : "") + fxErr + "</td>" +
-      '<td><span class="cur">' + esc(a.currency || "?") + "</span></td>" +
-      '<td class="num">' + fmt.price(a.price, a.currency) + chg + "</td>" +
-      '<td><input class="cell num" type="number" step="any" data-i="' + i + '" data-f="shares" value="' + (a.shares ?? 0) + '"></td>' +
-      '<td class="num">' + fmt.money(r.priceBase != null ? r.value : null, state.base) + "</td>" +
-      '<td class="num">' + fmt.pct(r.curPct) + "</td>" +
-      '<td><input class="cell pct num" type="number" step="any" data-i="' + i + '" data-f="target" value="' + (a.target ?? 0) + '"></td>' +
-      "<td>" + devHtml + "</td>" +
-      "<td>" + actHtml + "</td>" +
-      '<td><button class="del" data-del="' + i + '" title="刪除">✕</button></td>';
+      '<td class="c-cur"><span class="cur">' + esc(a.currency || "?") + "</span></td>" +
+      '<td class="num c-price" data-label="現價">' + fmt.price(a.price, a.currency) + chg + "</td>" +
+      '<td class="c-shares" data-label="持有股數"><input class="cell num" type="number" step="any" data-i="' + i + '" data-f="shares" value="' + (a.shares ?? 0) + '"></td>' +
+      '<td class="num c-value" data-label="市值">' + fmt.money(r.priceBase != null ? r.value : null, state.base) + "</td>" +
+      '<td class="num c-curpct" data-label="目前 %">' + fmt.pct(r.curPct) + "</td>" +
+      '<td class="c-target" data-label="目標 %"><input class="cell pct num" type="number" step="any" data-i="' + i + '" data-f="target" value="' + (a.target ?? 0) + '"></td>' +
+      '<td class="c-dev" data-label="偏離">' + devHtml + "</td>" +
+      '<td class="c-action" data-label="再平衡建議">' + actHtml + "</td>" +
+      '<td class="c-del"><button class="del" data-del="' + i + '" title="刪除">✕</button></td>';
     tbody.appendChild(tr);
   });
 
@@ -895,17 +951,6 @@ document.getElementById("tbody").addEventListener("change", e => {
   }
 });
 document.getElementById("tbody").addEventListener("click", e => {
-  const mv = e.target.closest("[data-move]");
-  if (mv) {
-    const i = Number(mv.dataset.i), d = Number(mv.dataset.move);
-    commitEdit();
-    moveAsset(i, i + d);
-    // 重繪後把焦點放回同一檔的按鈕，方便用鍵盤連續移動
-    const tb = document.getElementById("tbody");
-    const q = dir => tb.querySelector('[data-move="' + dir + '"][data-i="' + (i + d) + '"]:not(:disabled)');
-    (q(d) || q(-d))?.focus();
-    return;
-  }
   const b = e.target.closest("[data-del]");
   if (!b) return;
   const i = Number(b.dataset.del);
@@ -923,7 +968,7 @@ function commitEdit() {
   if (el && el.matches("#tbody input")) el.blur();
 }
 document.getElementById("tbody").addEventListener("mousedown", e => {
-  if (e.target.closest(".drag, [data-move], [data-del]")) e.preventDefault();
+  if (e.target.closest(".sortcell, [data-del]")) e.preventDefault();
 });
 
 function moveAsset(from, to) {
@@ -935,23 +980,37 @@ function moveAsset(from, to) {
 /* 拖曳排序：只搬動相鄰列、不搬動被拖曳列本身，pointer capture 才不會中斷 */
 let drag = null;
 
+document.getElementById("tbody").addEventListener("dragstart", e => e.preventDefault());
 document.getElementById("tbody").addEventListener("pointerdown", e => {
-  const h = e.target.closest(".drag");
-  if (!h || e.button !== 0) return;
-  const from = Number(h.dataset.i);
+  const cell = e.target.closest(".sortcell");   // 整格都可拖，不必剛好壓在 ⠿ 上
+  if (!cell || e.button !== 0) return;
+  const from = Number(cell.querySelector(".drag").dataset.i);
   commitEdit();   // 可能重繪表格，所以下面要重新取列
   const row = document.getElementById("tbody").rows[from];
-  row.querySelector(".drag").setPointerCapture(e.pointerId);
+  row.querySelector(".sortcell").setPointerCapture(e.pointerId);
   row.classList.add("dragging");
-  drag = { from, row };
+  drag = { from, row, y: e.clientY };
+  requestAnimationFrame(dragAutoScroll);
 });
-document.getElementById("tbody").addEventListener("pointermove", e => {
-  if (!drag) return;
-  const { row } = drag, tb = row.parentNode;
+function dragReorder() {
+  const { row, y } = drag, tb = row.parentNode;
   const mid = el => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; };
   let s;
-  while ((s = row.previousElementSibling) && e.clientY < mid(s)) tb.insertBefore(s, row.nextElementSibling);
-  while ((s = row.nextElementSibling) && e.clientY > mid(s)) tb.insertBefore(s, row);
+  while ((s = row.previousElementSibling) && y < mid(s)) tb.insertBefore(s, row.nextElementSibling);
+  while ((s = row.nextElementSibling) && y > mid(s)) tb.insertBefore(s, row);
+}
+/* 拖到視窗上下緣時自動捲動，清單超過一個畫面也拖得到頭尾 */
+function dragAutoScroll() {
+  if (!drag) return;
+  const EDGE = 60;
+  const dy = drag.y < EDGE ? -10 : drag.y > window.innerHeight - EDGE ? 10 : 0;
+  if (dy) { window.scrollBy(0, dy); dragReorder(); }
+  requestAnimationFrame(dragAutoScroll);
+}
+document.getElementById("tbody").addEventListener("pointermove", e => {
+  if (!drag) return;
+  drag.y = e.clientY;
+  dragReorder();
 });
 function endDrag(apply) {
   if (!drag) return;
